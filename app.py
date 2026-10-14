@@ -1,4 +1,4 @@
-
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
@@ -83,10 +83,15 @@ previous_schedule = load_previous_schedule()
 if run_schedule:
     try:
         with st.spinner("Generating the schedule..."):
+
             schedule, solver_status = optimize_schedule(
                 programs,
                 venues,
+                current_schedule=previous_schedule,
+                freeze_window_days=int(freeze_window_days),
+                reference_date=date.today(),
             )
+
             schedule.to_csv(OUTPUT_PATH, index=False)
 
         st.session_state["schedule"] = schedule
