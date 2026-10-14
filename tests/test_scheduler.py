@@ -1,4 +1,4 @@
-
+from scheduler import load_data, validate_data, optimize_schedule
 import unittest
 from datetime import date, time
 from scheduler import check_fixed_conflicts, SchedulingDataError
