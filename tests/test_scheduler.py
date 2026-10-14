@@ -139,6 +139,7 @@ class TestScheduler(unittest.TestCase):
         with self.assertRaises(SchedulingDataError):
             check_fixed_conflicts([first, second])
 
+
     def test_generated_schedule_has_no_venue_conflicts(self):
         """The generated schedule must not contain venue conflicts."""
 
@@ -154,32 +155,37 @@ class TestScheduler(unittest.TestCase):
         self.assertGreater(len(scheduled), 0)
 
         for venue_id, group in scheduled.groupby("venue_id"):
-            events = group.sort_values("start_time")
+            venue = venues[
+                venues["venue_id"].astype(str) == str(venue_id)
+            ].iloc[0]
 
-            previous_end = None
-            for _, event in events.iterrows():
-                start = pd.to_datetime(
-                    f"{event['date']} {event['start_time']}"
-                )
+            setup_minutes = int(venue["min_setup_time_min"])
 
-                if previous_end is not None:
-                    self.assertGreaterEqual(
-                        start,
-                        previous_end,
-                        f"Venue conflict in {venue_id}",
+            for event_date, daily_events in group.groupby("date"):
+                events = daily_events.sort_values("start_time")
+
+                previous_occupied_end = None
+
+                for _, event in events.iterrows():
+                    start = pd.to_datetime(
+                        f"{event_date} {event['start_time']}"
                     )
 
-                end = pd.to_datetime(
-                    f"{event['date']} {event['end_time']}"
-                )
+                    if previous_occupied_end is not None:
+                        self.assertGreaterEqual(
+                            start,
+                            previous_occupied_end,
+                            f"Venue conflict in {venue_id} on {event_date}",
+                        )
 
-                venue = venues[
-                    venues["venue_id"].astype(str) == str(venue_id)
-                ].iloc[0]
+                    end = pd.to_datetime(
+                        f"{event_date} {event['end_time']}"
+                    )
 
-                previous_end = end + pd.Timedelta(
-                    minutes=int(venue["min_setup_time_min"])
-                )
+                    previous_occupied_end = (
+                        end + pd.Timedelta(minutes=setup_minutes)
+                    )
+
 
 
 if __name__ == "__main__":
