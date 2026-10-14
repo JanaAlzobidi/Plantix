@@ -1,0 +1,7 @@
+program_id,program_name,description,duration_min,attendance_value,attendance_mode,target_audience,program_category,program_domain,venue_requirements,owner,time_type,fixed_date,fixed_start_time,fixed_venue_id,preferred_dates,preferred_time_slots
+N101,New Flexible A,Synthetic test program: New Flexible A,60,20,estimated,Public,Workshop,Technology,projector,Test Team,flexible,,,,2026-10-17;2026-10-18;2026-10-19,morning
+N102,New Flexible B,Synthetic test program: New Flexible B,90,30,estimated,Public,Workshop,Technology,computers;projector,Test Team,flexible,,,,2026-10-17;2026-10-18;2026-10-19,afternoon
+N103,New Flexible C,Synthetic test program: New Flexible C,120,60,estimated,Public,Workshop,Technology,microphone;projector,Test Team,flexible,,,,2026-10-17;2026-10-18;2026-10-19,morning;afternoon
+N104,New Flexible D,Synthetic test program: New Flexible D,45,18,estimated,Public,Workshop,Technology,computers,Test Team,flexible,,,,2026-10-17;2026-10-18;2026-10-19,morning
+N105,New Flexible E,Synthetic test program: New Flexible E,75,50,estimated,Public,Workshop,Technology,display_booths;power,Test Team,flexible,,,,2026-10-17;2026-10-18;2026-10-19,afternoon
+N106,New Flexible F,Synthetic test program: New Flexible F,90,70,estimated,Public,Workshop,Technology,stage;microphone,Test Team,flexible,,,,2026-10-17;2026-10-18;2026-10-19,afternoon

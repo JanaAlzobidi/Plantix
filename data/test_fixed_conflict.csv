@@ -1,0 +1,3 @@
+program_id,program_name,description,duration_min,attendance_value,attendance_mode,target_audience,program_category,program_domain,venue_requirements,owner,time_type,fixed_date,fixed_start_time,fixed_venue_id,preferred_dates,preferred_time_slots
+X101,Fixed Conflict A,Synthetic test program: Fixed Conflict A,60,50,estimated,Public,Workshop,Technology,projector;microphone,Test Team,fixed,2026-10-17,10:00,V01,2026-10-17,morning
+X102,Fixed Conflict B,Synthetic test program: Fixed Conflict B,60,60,estimated,Public,Workshop,Technology,projector;microphone,Test Team,fixed,2026-10-17,10:30,V01,2026-10-17,morning
