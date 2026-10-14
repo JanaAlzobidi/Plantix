@@ -61,14 +61,14 @@ with st.sidebar:
         value=3,
         step=1,
         help=(
-            "The intended policy protects near-term assignments. "
-            "Freeze-window integration is being developed."
+            "New flexible programs cannot be scheduled within "
+            "the freeze window. Existing programs may be rescheduled."
         ),
     )
-
+    
     st.info(
-        "Current version: the freeze-window setting is displayed "
-        "but is not yet applied when scheduling."
+        "Freeze window is applied during scheduling. "
+        "New flexible programs are restricted from near-term dates."
     )
 
     run_schedule = st.button(
@@ -217,8 +217,8 @@ with tab_review:
         )
 
     st.caption(
-        "Approval workflows, change previews, and freeze-window "
-        "enforcement will be added in the next iteration."
+        "Review the generated schedule and unscheduled programs "
+        "before approving changes."
     )
 
 st.divider()
