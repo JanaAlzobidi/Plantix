@@ -56,7 +56,7 @@ def sample_programs():
             "duration_min": 90,
             "attendance_value": 20,
             "attendance_mode": "confirmed",
-            "venue_requirements": "Projector;Wi-Fi;Microphones",,
+            "venue_requirements": "Projector;Wi-Fi;Microphones",
             "time_type": "flexible",
             "fixed_date": "",
             "fixed_start_time": "",
