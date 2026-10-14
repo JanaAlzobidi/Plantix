@@ -297,10 +297,97 @@ def check_fixed_conflicts(candidates, programs):
                 )
 
 
-def optimize_schedule(programs, venues):
+
+def optimize_schedule(
+    programs,
+    venues,
+    current_schedule=None,
+    freeze_window_days=0,
+    reference_date=None,
+):
     validate_data(programs, venues)
+
+    if (
+        not isinstance(freeze_window_days, int)
+        or isinstance(freeze_window_days, bool)
+        or freeze_window_days < 0
+    ):
+        raise SchedulingDataError(
+            "freeze_window_days must be a non-negative integer."
+        )
+
+    if reference_date is None:
+        reference_date = date.today()
+    elif isinstance(reference_date, str):
+        try:
+            reference_date = date.fromisoformat(reference_date)
+        except ValueError as exc:
+            raise SchedulingDataError(
+                "reference_date must use YYYY-MM-DD format."
+            ) from exc
+
+    if isinstance(reference_date, datetime):
+        reference_date = reference_date.date()
+
+    if not isinstance(reference_date, date):
+        raise SchedulingDataError(
+            "reference_date must be a date or YYYY-MM-DD string."
+        )
+
     candidates, lookup = generate_candidates(programs, venues)
     check_fixed_conflicts(candidates, programs)
+
+    program_ids = set(programs["program_id"])
+
+    frozen_assignments = {}
+    if current_schedule is not None and not current_schedule.empty:
+        required_schedule_columns = {
+            "program_id", "date", "start_time", "venue_id"
+        }
+        missing = required_schedule_columns - set(current_schedule.columns)
+        if missing:
+            raise SchedulingDataError(
+                f"Current schedule is missing columns: {sorted(missing)}"
+            )
+
+        for _, row in current_schedule.iterrows():
+            pid = row["program_id"]
+
+            if pid not in program_ids:
+                continue
+
+            try:
+                event_date = parse_date(row["date"])
+                start_time = parse_time(row["start_time"])
+            except (ValueError, TypeError) as exc:
+                raise SchedulingDataError(
+                    f"{pid}: invalid assignment in current schedule."
+                ) from exc
+
+            if event_date is None or start_time is None:
+                raise SchedulingDataError(
+                    f"{pid}: current assignment has no date or start time."
+                )
+
+            days_until_event = (event_date - reference_date).days
+            is_frozen = 0 <= days_until_event <= freeze_window_days
+
+            if is_frozen:
+                matching = [
+                    candidate
+                    for candidate in candidates[pid]
+                    if candidate["date"] == event_date.isoformat()
+                    and candidate["start_time"] == start_time.strftime("%H:%M")
+                    and str(candidate["venue_id"]) == str(row["venue_id"])
+                ]
+
+                if not matching:
+                    raise SchedulingDataError(
+                        f"{pid}: frozen assignment is no longer feasible. "
+                        "Manager review is required."
+                    )
+
+                frozen_assignments[pid] = matching[0]
 
     model = cp_model.CpModel()
     selected = {}
@@ -318,8 +405,29 @@ def optimize_schedule(programs, venues):
         model.Add(sum(vars_for_program) == scheduled[pid])
 
         program = programs.loc[programs["program_id"] == pid].iloc[0]
+
         if program["time_type"] == "fixed":
             model.Add(scheduled[pid] == 1)
+
+        if pid in frozen_assignments:
+            frozen = frozen_assignments[pid]
+            matching_indices = [
+                index
+                for index, candidate in enumerate(options)
+                if (
+                    candidate["date"] == frozen["date"]
+                    and candidate["start_time"] == frozen["start_time"]
+                    and candidate["venue_id"] == frozen["venue_id"]
+                )
+            ]
+
+            if len(matching_indices) != 1:
+                raise SchedulingDataError(
+                    f"{pid}: frozen assignment could not be uniquely matched."
+                )
+
+            model.Add(scheduled[pid] == 1)
+            model.Add(selected[(pid, matching_indices[0])] == 1)
 
     all_keys = list(selected.keys())
 
@@ -333,7 +441,9 @@ def optimize_schedule(programs, venues):
                 continue
 
             if assignments_conflict(first, second):
-                model.Add(selected[first_key] + selected[second_key] <= 1)
+                model.Add(
+                    selected[first_key] + selected[second_key] <= 1
+                )
 
     objective_terms = []
 
@@ -341,14 +451,18 @@ def optimize_schedule(programs, venues):
         objective_terms.append(1_000_000 * scheduled[pid])
 
         program = programs.loc[programs["program_id"] == pid].iloc[0]
+
         for index, candidate in enumerate(options):
             score = preferred_score(
                 program,
                 date.fromisoformat(candidate["date"]),
                 parse_time(candidate["start_time"]),
             )
+
             if score:
-                objective_terms.append(score * selected[(pid, index)])
+                objective_terms.append(
+                    score * selected[(pid, index)]
+                )
 
     model.Maximize(sum(objective_terms))
 
@@ -358,40 +472,60 @@ def optimize_schedule(programs, venues):
 
     if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         raise SchedulingDataError(
-            "No feasible schedule could be found for the fixed assignments."
+            "No feasible schedule could be found. "
+            "Check fixed and frozen assignments for conflicts."
         )
 
-    rows = []
-    for key, var in selected.items():
-        if solver.Value(var):
-            rows.append(lookup[key])
+    rows = [
+        lookup[key]
+        for key, var in selected.items()
+        if solver.Value(var)
+    ]
 
-    schedule = pd.DataFrame(rows)
-    if schedule.empty:
-        schedule = pd.DataFrame(columns=[
-            "program_id", "program_name", "date", "start_time",
-            "end_time", "occupied_end", "venue_id", "venue_name",
-            "attendance", "time_type",
-        ])
+    columns = [
+        "program_id", "program_name", "date", "start_time",
+        "end_time", "occupied_end", "venue_id", "venue_name",
+        "attendance", "time_type",
+    ]
+    schedule = pd.DataFrame(rows, columns=columns)
 
     scheduled_ids = set(schedule["program_id"])
-    unscheduled_ids = set(programs["program_id"]) - scheduled_ids
+    unscheduled_ids = program_ids - scheduled_ids
 
-    unscheduled = pd.DataFrame([
-        {
+    unscheduled_rows = []
+    for pid in sorted(unscheduled_ids):
+        program = programs.loc[
+            programs["program_id"] == pid
+        ].iloc[0]
+
+        unscheduled_rows.append({
             "program_id": pid,
-            "program_name": programs.loc[
-                programs["program_id"] == pid, "program_name"
-            ].iloc[0],
-            "reason": "No conflict-free compatible time and venue found.",
-        }
-        for pid in sorted(unscheduled_ids)
-    ])
+            "program_name": program["program_name"],
+            "reason": (
+                "Manual review required: event is within the freeze window."
+                if (
+                    pid in set(programs["program_id"])
+                    and pid not in frozen_assignments
+                    and 0 <= (
+                        (
+                            parse_date(program["fixed_date"])
+                            if program["time_type"] == "fixed"
+                            and str(program["fixed_date"]).strip()
+                            else END_DATE
+                        ) - reference_date
+                    ).days <= freeze_window_days
+                )
+                else "No conflict-free compatible time and venue found."
+            ),
+        })
 
     status_name = solver.StatusName(status)
-    return schedule.sort_values(["date", "start_time"]).reset_index(drop=True), status_name
+    schedule = schedule.sort_values(
+        ["date", "start_time"]
+    ).reset_index(drop=True)
 
-
+    return schedule, status_name
+    
 def load_data():
     programs = pd.read_csv("data/programs.csv", keep_default_na=False)
     venues = pd.read_csv("data/venues.csv", keep_default_na=False)
