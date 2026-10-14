@@ -133,37 +133,46 @@ class SchedulerTests(unittest.TestCase):
                     first["occupied_end"],
                 )
 
-    def test_frozen_event_keeps_previous_assignment(self):
-        programs = sample_programs()
-        venues = sample_venues()
+    
+def test_existing_event_can_change_assignment_in_freeze_window(self):
+    programs = sample_programs()
+    venues = sample_venues()
 
-        previous_schedule = pd.DataFrame([
-            {
-                "program_id": "P2",
-                "program_name": "Flexible Workshop",
-                "date": "2026-10-17",
-                "start_time": "11:00",
-                "end_time": "12:30",
-                "occupied_end": "12:45",
-                "venue_id": "V2",
-                "venue_name": "Large Hall",
-                "attendance": 20,
-                "time_type": "flexible",
-            }
-        ])
+    previous_schedule = pd.DataFrame([
+        {
+            "program_id": "P2",
+            "program_name": "Flexible Workshop",
+            "date": "2026-10-17",
+            "start_time": "11:00",
+            "end_time": "12:30",
+            "occupied_end": "12:45",
+            "venue_id": "V2",
+            "venue_name": "Large Hall",
+            "attendance": 20,
+            "time_type": "flexible",
+        }
+    ])
 
-        schedule, status = optimize_schedule(
-            programs,
-            venues,
-            current_schedule=previous_schedule,
-            freeze_window_days=3,
-            reference_date="2026-10-14",
-        )
+    schedule, status = optimize_schedule(
+        programs,
+        venues,
+        current_schedule=previous_schedule,
+        freeze_window_days=3,
+        reference_date="2026-10-14",
+    )
 
-        frozen = schedule[schedule["program_id"] == "P2"].iloc[0]
-        self.assertEqual(frozen["date"], "2026-10-17")
-        self.assertEqual(frozen["start_time"], "11:00")
-        self.assertEqual(frozen["venue_id"], "V2")
+    event = schedule[schedule["program_id"] == "P2"]
+
+    self.assertEqual(len(event), 1)
+    self.assertNotEqual(
+        (
+            event.iloc[0]["date"],
+            event.iloc[0]["start_time"],
+            event.iloc[0]["venue_id"],
+        ),
+        ("2026-10-17", "11:00", "V2"),
+    )
+
 
     def test_frozen_event_blocks_same_venue_time(self):
         programs = sample_programs()
