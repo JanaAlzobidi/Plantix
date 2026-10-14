@@ -1,5 +1,0 @@
-venue_id,venue_name,capacity,equipment,min_setup_time_min,status,zone
-V001,Innovation Classroom,40,Projector;Laptops;Wi-Fi;Seating Classroom;Power Outlets,15,available,Zone A
-V002,Main Auditorium,120,Projector;Wi-Fi;Sound System;Stage;Microphones;Seating Theater;Power Outlets,30,available,Zone B
-V003,VR and AI Lab,30,Projector;Laptops;Wi-Fi;VR Headsets;Seating Classroom;Power Outlets,20,available,Zone A
-V004,Multipurpose Hall,70,Projector;Wi-Fi;Sound System;Stage;Microphones;Seating Theater;Power Outlets,25,available,Zone C
