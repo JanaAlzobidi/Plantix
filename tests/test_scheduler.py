@@ -1,3 +1,4 @@
+
 import unittest
 
 import pandas as pd
@@ -5,7 +6,6 @@ import pandas as pd
 from scheduler import (
     SchedulingDataError,
     assignments_conflict,
-    generate_candidates,
     optimize_schedule,
     validate_data,
 )
@@ -67,30 +67,47 @@ def sample_programs():
     ])
 
 
+def previous_schedule_for_p2():
+    return pd.DataFrame([
+        {
+            "program_id": "P2",
+            "program_name": "Flexible Workshop",
+            "date": "2026-10-17",
+            "start_time": "11:00",
+            "end_time": "12:30",
+            "occupied_end": "13:00",
+            "venue_id": "V2",
+            "venue_name": "Large Hall",
+            "attendance": 20,
+            "time_type": "flexible",
+        }
+    ])
+
+
 class SchedulerTests(unittest.TestCase):
 
     def test_fixed_event_keeps_its_assignment(self):
-        programs = sample_programs()
-        venues = sample_venues()
-
-        schedule, _ = optimize_schedule(programs, venues)
+        schedule, _ = optimize_schedule(
+            sample_programs(),
+            sample_venues(),
+        )
 
         fixed = schedule[schedule["program_id"] == "P1"].iloc[0]
+
         self.assertEqual(fixed["date"], "2026-10-17")
         self.assertEqual(fixed["start_time"], "09:00")
         self.assertEqual(fixed["venue_id"], "V2")
 
     def test_incompatible_venue_is_not_selected(self):
-        programs = sample_programs()
-        venues = sample_venues()
-
-        schedule, _ = optimize_schedule(programs, venues)
+        schedule, _ = optimize_schedule(
+            sample_programs(),
+            sample_venues(),
+        )
 
         flexible = schedule[schedule["program_id"] == "P2"]
-        self.assertFalse(
-            (flexible["venue_id"] == "V1").any()
-            if not flexible.empty else False
-        )
+
+        if not flexible.empty:
+            self.assertFalse((flexible["venue_id"] == "V1").any())
 
     def test_setup_time_prevents_conflict(self):
         first = {
@@ -112,17 +129,16 @@ class SchedulerTests(unittest.TestCase):
 
     def test_invalid_data_is_rejected(self):
         programs = sample_programs()
-        venues = sample_venues()
         programs.loc[0, "duration_min"] = -10
 
         with self.assertRaises(SchedulingDataError):
-            validate_data(programs, venues)
+            validate_data(programs, sample_venues())
 
     def test_generated_schedule_has_no_venue_conflicts(self):
-        programs = sample_programs()
-        venues = sample_venues()
-
-        schedule, _ = optimize_schedule(programs, venues)
+        schedule, _ = optimize_schedule(
+            sample_programs(),
+            sample_venues(),
+        )
 
         for _, group in schedule.groupby(["venue_id", "date"]):
             events = group.sort_values("start_time").to_dict("records")
@@ -133,64 +149,40 @@ class SchedulerTests(unittest.TestCase):
                     first["occupied_end"],
                 )
 
-    
-def test_existing_event_can_change_assignment_in_freeze_window(self):
-    programs = sample_programs()
-    venues = sample_venues()
-
-    previous_schedule = pd.DataFrame([
-        {
-            "program_id": "P2",
-            "program_name": "Flexible Workshop",
-            "date": "2026-10-17",
-            "start_time": "11:00",
-            "end_time": "12:30",
-            "occupied_end": "12:45",
-            "venue_id": "V2",
-            "venue_name": "Large Hall",
-            "attendance": 20,
-            "time_type": "flexible",
-        }
-    ])
-
-    schedule, status = optimize_schedule(
-        programs,
-        venues,
-        current_schedule=previous_schedule,
-        freeze_window_days=3,
-        reference_date="2026-10-14",
-    )
-
-    event = schedule[schedule["program_id"] == "P2"]
-
-    self.assertEqual(len(event), 1)
-    self.assertNotEqual(
-        (
-            event.iloc[0]["date"],
-            event.iloc[0]["start_time"],
-            event.iloc[0]["venue_id"],
-        ),
-        ("2026-10-17", "11:00", "V2"),
-    )
-
-
-    def test_frozen_event_blocks_same_venue_time(self):
+    def test_existing_event_can_change_assignment_in_freeze_window(self):
         programs = sample_programs()
         venues = sample_venues()
 
-        previous_schedule = pd.DataFrame([
-            {
-                "program_id": "P2",
-                "program_name": "Flexible Workshop",
-                "date": "2026-10-17",
-                "start_time": "11:00",
-                "end_time": "12:30",
-                "occupied_end": "13:00",
-                "venue_id": "V2",
-                "venue_name": "Large Hall",
-                "attendance": 20,
-                "time_type": "flexible",
-            }
+        # Make the previous assignment conflict with the fixed event.
+        # P2 must move from 11:00 to another feasible time.
+        previous_schedule = previous_schedule_for_p2()
+
+        schedule, _ = optimize_schedule(
+            programs,
+            venues,
+            current_schedule=previous_schedule,
+            freeze_window_days=3,
+            reference_date="2026-10-14",
+        )
+
+        event = schedule[schedule["program_id"] == "P2"]
+
+        self.assertEqual(len(event), 1)
+        self.assertNotEqual(
+            event.iloc[0]["start_time"],
+            "11:00",
+        )
+
+    def test_new_flexible_event_is_not_scheduled_in_freeze_window(self):
+        programs = sample_programs()
+        venues = sample_venues()
+
+        # P2 is new because it does not appear in the previous schedule.
+        previous_schedule = pd.DataFrame(columns=[
+            "program_id",
+            "date",
+            "start_time",
+            "venue_id",
         ])
 
         schedule, _ = optimize_schedule(
@@ -201,24 +193,37 @@ def test_existing_event_can_change_assignment_in_freeze_window(self):
             reference_date="2026-10-14",
         )
 
-        frozen = schedule[schedule["program_id"] == "P2"].iloc[0]
-        other_events = schedule[
-            (schedule["venue_id"] == frozen["venue_id"])
-            & (schedule["date"] == frozen["date"])
-            & (schedule["program_id"] != "P2")
-        ]
+        flexible = schedule[schedule["program_id"] == "P2"]
 
-        for event in other_events.to_dict("records"):
-            self.assertFalse(assignments_conflict(frozen.to_dict(), event))
+        if not flexible.empty:
+            for event_date in flexible["date"]:
+                days_until_event = (
+                    pd.Timestamp(event_date).date()
+                    - pd.Timestamp("2026-10-14").date()
+                ).days
+
+                self.assertFalse(0 <= days_until_event <= 3)
+
+    def test_existing_event_does_not_create_venue_conflicts(self):
+        schedule, _ = optimize_schedule(
+            sample_programs(),
+            sample_venues(),
+            current_schedule=previous_schedule_for_p2(),
+            freeze_window_days=3,
+            reference_date="2026-10-14",
+        )
+
+        for _, group in schedule.groupby(["venue_id", "date"]):
+            events = group.sort_values("start_time").to_dict("records")
+
+            for first, second in zip(events, events[1:]):
+                self.assertFalse(assignments_conflict(first, second))
 
     def test_invalid_freeze_window_is_rejected(self):
-        programs = sample_programs()
-        venues = sample_venues()
-
         with self.assertRaises(SchedulingDataError):
             optimize_schedule(
-                programs,
-                venues,
+                sample_programs(),
+                sample_venues(),
                 freeze_window_days=-1,
                 reference_date="2026-10-14",
             )
@@ -226,4 +231,3 @@ def test_existing_event_can_change_assignment_in_freeze_window(self):
 
 if __name__ == "__main__":
     unittest.main()
-
