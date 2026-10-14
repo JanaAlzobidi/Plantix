@@ -139,6 +139,48 @@ class TestScheduler(unittest.TestCase):
         with self.assertRaises(SchedulingDataError):
             check_fixed_conflicts([first, second])
 
+    def test_generated_schedule_has_no_venue_conflicts(self):
+        """The generated schedule must not contain venue conflicts."""
+
+        programs, venues = load_data()
+        validate_data(programs, venues)
+
+        schedule, status = optimize_schedule(programs, venues)
+
+        scheduled = schedule[
+            schedule["status"] == "scheduled"
+        ].copy()
+
+        self.assertGreater(len(scheduled), 0)
+
+        for venue_id, group in scheduled.groupby("venue_id"):
+            events = group.sort_values("start_time")
+
+            previous_end = None
+            for _, event in events.iterrows():
+                start = pd.to_datetime(
+                    f"{event['date']} {event['start_time']}"
+                )
+
+                if previous_end is not None:
+                    self.assertGreaterEqual(
+                        start,
+                        previous_end,
+                        f"Venue conflict in {venue_id}",
+                    )
+
+                end = pd.to_datetime(
+                    f"{event['date']} {event['end_time']}"
+                )
+
+                venue = venues[
+                    venues["venue_id"].astype(str) == str(venue_id)
+                ].iloc[0]
+
+                previous_end = end + pd.Timedelta(
+                    minutes=int(venue["min_setup_time_min"])
+                )
+
 
 if __name__ == "__main__":
     unittest.main()
