@@ -1,7 +1,7 @@
 
 import unittest
 from datetime import date, time
-
+from scheduler import check_fixed_conflicts, SchedulingDataError
 import pandas as pd
 
 from scheduler import (
@@ -111,6 +111,33 @@ class TestScheduler(unittest.TestCase):
         self.assertEqual(candidate["event_date"], date(2026, 10, 17))
         self.assertEqual(candidate["start_dt"].time(), time(11, 0))
         self.assertEqual(candidate["venue_id"], "V002")
+
+
+    def test_conflicting_fixed_events_are_rejected(self):
+        """Two fixed events cannot overlap in the same venue."""
+
+        first = {
+            "program_id": "P001",
+            "venue_id": "V002",
+            "venue_name": "Main Auditorium",
+            "start_dt": pd.Timestamp("2026-10-17 09:00"),
+            "end_dt": pd.Timestamp("2026-10-17 10:00"),
+            "occupied_end": pd.Timestamp("2026-10-17 10:30"),
+            "fixed": True,
+        }
+
+        second = {
+            "program_id": "P007",
+            "venue_id": "V002",
+            "venue_name": "Main Auditorium",
+            "start_dt": pd.Timestamp("2026-10-17 10:15"),
+            "end_dt": pd.Timestamp("2026-10-17 11:15"),
+            "occupied_end": pd.Timestamp("2026-10-17 11:45"),
+            "fixed": True,
+        }
+
+        with self.assertRaises(SchedulingDataError):
+            check_fixed_conflicts([first, second])
 
 
 if __name__ == "__main__":
