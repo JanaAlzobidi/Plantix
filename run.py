@@ -140,7 +140,7 @@ def approve(args) -> int:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="EXPOWISE scheduling engine")
+    parser = argparse.ArgumentParser(description="Plantix scheduling engine")
     parser.add_argument("--data-dir", default="data")
     parser.add_argument("--client", help="مجلد معرض فيه client.json، مثل clients/riyadh_mini")
     sub = parser.add_subparsers(dest="command", required=True)
