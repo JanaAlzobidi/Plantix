@@ -1,16 +1,18 @@
 """CP-SAT model: choose at most one candidate per flexible program.
 
-Objective levels, highest first. Each level's weight exceeds the largest
+Objective levels in the default order, highest first. The client's profile
+may reorder them (config.priorities). Each level's weight exceeds the largest
 possible total of every level below it, so a lower level can never buy a
 loss on a higher one:
 
-  1. KEEP   - keep every approved flexible event in the schedule
-  2. COUNT  - schedule as many flexible events as possible
-  3. STABLE - leave approved events where they are: same slot 3, same day
-              and time in another room 2, same day another time 1, other
-              day 0 (all doubled when the approved date is in the freeze window)
-  4. PREF   - preferred date (2 points) and preferred time slot (1 point)
-  5. FIT    - smallest suitable venue, keeping big halls free
+  keep_approved  - keep every approved flexible event in the schedule
+  schedule_count - schedule as many flexible events as possible
+  stability      - leave approved events where they are: same slot 3, same
+                   day and time in another room 2, same day another time 1,
+                   other day 0 (doubled when the approved date is frozen)
+  preferences    - preferred date (2 points) and preferred time slot (1 point)
+  room_fit       - smallest suitable venue, keeping big halls free
+
 
 Fixed events are not variables: they are always placed, and every flexible
 option that would overlap one was already removed in candidates.py.
@@ -23,7 +25,7 @@ from dataclasses import dataclass, field
 from ortools.sat.python import cp_model
 
 from .candidates import Candidate
-from .config import EngineConfig, in_freeze_window
+from .config import PRIORITY_LEVELS, EngineConfig, in_freeze_window
 from .data import Assignment, Inputs, Program, Venue
 
 
@@ -70,19 +72,20 @@ def stability_points(candidate: Candidate, old: Assignment, inputs: Inputs) -> i
     return base * (2 if frozen else 1)
 
 
-def level_weights(n_flexible: int, n_existing_flexible: int) -> dict[str, int]:
-    """Lowest level first; each weight = (max total of all lower levels) + 1."""
-    max_units = [
-        ("fit", FIT_MAX * n_flexible),
-        ("pref", PREF_MAX * n_flexible),
-        ("stable", STAB_MAX * n_existing_flexible),
-        ("count", n_flexible),
-        ("keep", n_existing_flexible),
-    ]
+def level_weights(n_flexible: int, n_existing_flexible: int,
+                  priorities=PRIORITY_LEVELS) -> dict[str, int]:
+    """Walks the levels from lowest to highest; each weight = (max total of all lower levels) + 1."""
+    max_units = {
+        "room_fit": FIT_MAX * n_flexible,
+        "preferences": PREF_MAX * n_flexible,
+        "stability": STAB_MAX * n_existing_flexible,
+        "schedule_count": n_flexible,
+        "keep_approved": n_existing_flexible,
+    }
     weights, bound = {}, 0
-    for name, units in max_units:
+    for name in reversed(priorities):
         weights[name] = bound + 1
-        bound += weights[name] * units
+        bound += weights[name] * max_units[name]
     weights["_bound"] = bound
     return weights
 
@@ -114,7 +117,7 @@ def solve(inputs: Inputs, candidates: dict[str, list[Candidate]], config: Engine
         return SolveOutcome("OPTIMAL", True, True, chosen)
 
     existing_flexible = [pid for pid in flexible if pid in inputs.existing]
-    weights = level_weights(len(flexible), len(existing_flexible))
+    weights = level_weights(len(flexible), len(existing_flexible), config.priorities)
     if weights["_bound"] >= MAX_SAFE_OBJECTIVE:
         return SolveOutcome(
             "MODEL_TOO_LARGE", False, False, chosen,
@@ -141,10 +144,10 @@ def solve(inputs: Inputs, candidates: dict[str, list[Candidate]], config: Engine
                 (candidate.start, candidate.busy_until, var)
             )
 
-            score = weights["fit"] * fit_points(program, venues[candidate.venue_id])
-            score += weights["pref"] * preference_points(program, candidate)
+            score = weights["room_fit"] * fit_points(program, venues[candidate.venue_id])
+            score += weights["preferences"] * preference_points(program, candidate)
             if old is not None:
-                score += weights["stable"] * stability_points(candidate, old, inputs)
+                score += weights["stability"] * stability_points(candidate, old, inputs)
                 if (candidate.date, candidate.start, candidate.venue_id) == (old.date, old.start, old.venue_id):
                     model.AddHint(var, 1)
             if score:
@@ -153,13 +156,13 @@ def solve(inputs: Inputs, candidates: dict[str, list[Candidate]], config: Engine
         option_vars[pid] = pairs
         model.Add(sum(var for _, var in pairs) == is_scheduled)
 
-        terms.append(weights["count"] * is_scheduled)
+        terms.append(weights["schedule_count"] * is_scheduled)
         if old is not None:
-            terms.append(weights["keep"] * is_scheduled)
+            terms.append(weights["keep_approved"] * is_scheduled)
 
     # Two intervals overlap exactly when one contains the other's start, so one
-    # "at most one" per distinct start time in each room-day is exact, even
-    # for off-grid times and any setup length.
+    # "at most one" per distinct start time in each room-day is
+    # exact, even for off-grid times and any setup length.
     for items in rooms.values():
         for t in sorted({start for start, _, _ in items}):
             covering = [var for start, busy, var in items if start <= t < busy]
