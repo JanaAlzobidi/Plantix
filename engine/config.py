@@ -49,8 +49,6 @@ class EngineConfig:
 
     # Client rules.
     priorities: tuple[str, ...] = PRIORITY_LEVELS
-    # Events sharing a non-empty `track` may not run at the same time.
-    tracks_no_overlap: bool = False
 
     solver_time_limit_seconds: float = 20.0
     solver_workers: int = 1
