@@ -129,3 +129,72 @@ def test_runtime_folder_without_marker_is_never_wiped(tmp_path):
     with pytest.raises(RuntimeError):
         create_app(runtime_dir=folder)
     assert (folder / "keep.txt").exists()
+
+
+# ---------------------------------------------------------------- the three roles
+
+def test_owner_request_is_recorded_under_the_owner(client):
+    body = flexible(owner="حاضنة ريادة الأعمال")
+    res = client.post("/api/programs", json=body).json()
+    p = next(x for x in res["state"]["programs"] if x["id"] == res["program_id"])
+    assert p["owner"] == "حاضنة ريادة الأعمال"
+    assert "حاضنة ريادة الأعمال" in res["state"]["owners"]
+
+
+def test_organizer_edit_keeps_the_owner(client):
+    client.put("/api/programs/P07", json=flexible(name="جلسة ريادة الأعمال", attendance=80))
+    s = client.get("/api/state").json()
+    assert next(p for p in s["programs"] if p["id"] == "P07")["owner"] == "حاضنة ريادة الأعمال"
+
+
+def test_report_preview_changes_nothing(client):
+    before = client.get("/api/state").json()["schedule"]
+    pv = client.post("/api/reports/preview", json={"venue_id": "V03", "kind": "equipment", "equipment": "microphone"}).json()
+    assert pv["ok"] and pv["title"] == "عطل ميكروفون في قاعة المؤتمرات B"
+    assert "جلسة ريادة الأعمال" in [a["name"] for a in pv["affected"]]
+    assert client.get("/api/state").json()["schedule"] == before
+
+
+def test_report_moves_events_and_explains_why(client):
+    r = client.post("/api/reports", json={"venue_id": "V03", "kind": "equipment", "equipment": "microphone"}).json()
+    assert r["report"]["status"] == "open" and r["report"]["affected"]
+    s = r["state"]
+    assert not any(x["venue_id"] == "V03" and x["program_id"] in ("P07", "P16", "P18") for x in s["schedule"])
+    moved = next(c for c in s["changes"] if c["program_id"] == "P07")
+    assert moved["type"] == "moved" and "بسبب عطل ميكروفون" in moved["message"]
+    assert moved["owner"] == "حاضنة ريادة الأعمال"
+
+
+def test_report_rejects_equipment_the_venue_does_not_have(client):
+    res = client.post("/api/reports", json={"venue_id": "V03", "kind": "equipment", "equipment": "stage"})
+    assert res.status_code == 400
+
+
+def test_approval_notifies_owners_and_venue_supervisor(client):
+    client.post("/api/reports", json={"venue_id": "V03", "kind": "equipment", "equipment": "microphone"})
+    s = client.post("/api/approve").json()["state"]
+    assert s["reports"][0]["status"] == "approved"
+    venue_notes = [n for n in s["notifications"] if n["to"] == "venue"]
+    assert len(venue_notes) == 1 and "اعتمد فريق البرامج" in venue_notes[0]["text"]
+    owner_notes = [n for n in s["notifications"] if n["to"] == "owner" and n["owner"] == "حاضنة ريادة الأعمال"]
+    assert any("جلسة ريادة الأعمال" in n["text"] for n in owner_notes)
+
+
+def test_resolving_a_report_restores_the_venue(client):
+    client.post("/api/reports", json={"venue_id": "V03", "kind": "equipment", "equipment": "microphone"})
+    s = client.post("/api/reports/R1/resolve").json()["state"]
+    v3 = next(v for v in s["venues"] if v["id"] == "V03")
+    assert "microphone" in v3["equipment"] and s["reports"][0]["status"] == "resolved"
+
+
+def test_closing_a_venue_with_fixed_events_needs_the_organizer(client):
+    r = client.post("/api/reports", json={"venue_id": "V01", "kind": "closed"}).json()
+    assert r["report"]["errors"]  # fixed events there cannot move on their own
+    assert r["state"]["summary"]["can_approve"] is False
+    s = client.post("/api/reports/R1/resolve").json()["state"]
+    assert s["summary"]["can_approve"] is True
+
+
+def test_role_pages_are_served(client):
+    for path in ("/", "/owner", "/venue"):
+        assert client.get(path).status_code == 200
