@@ -4,6 +4,11 @@
     result = generate_schedule(programs, venues, approved,
                                reference_date="2026-10-15", freeze_window_days=2)
     result.schedule, result.unscheduled, result.changes, result.issues, result.summary
+
+Attendance alerts (engine/insights.py) are a separate, optional module: the
+scheduling engine works without it. Import it directly when present:
+
+    from engine.insights import learn_attendance, attendance_alerts
 """
 
 from __future__ import annotations
@@ -15,7 +20,6 @@ from .config import (
     EngineConfig, in_freeze_window,
 )
 from .data import IssueLog, prepare_inputs
-from .insights import AttendanceModel, apply_predictions, attendance_alerts, learn_attendance
 from .report import CHANGE_LABELS_AR, ScheduleResult, build_failed_result, build_result
 from .profile import ClientProfile, ProfileError, load_profile, profile_from_dict
 from .solver import solve
@@ -46,9 +50,9 @@ def generate_schedule(programs, venues, current_schedule=None, *, reference_date
 
 __all__ = [
     "ADMISSION_LABELS_AR", "ADMISSION_OPEN", "ADMISSION_REGISTRATION",
-    "ApprovalError", "AttendanceModel", "CHANGE_LABELS_AR", "Client", "ClientConfigError",
+    "ApprovalError", "CHANGE_LABELS_AR", "Client", "ClientConfigError",
     "ClientProfile", "DataPaths", "EngineConfig", "PRIORITY_LABELS_AR", "PRIORITY_LEVELS", "ProfileError",
-    "ScheduleResult", "apply_predictions", "approve_proposal", "attendance_alerts", "generate_schedule",
-    "in_freeze_window", "learn_attendance", "load_client", "load_inputs", "load_profile",
+    "ScheduleResult", "approve_proposal", "generate_schedule",
+    "in_freeze_window", "load_client", "load_inputs", "load_profile",
     "profile_from_dict", "save_proposal",
 ]
