@@ -6,9 +6,32 @@ from datetime import date, time, timedelta
 
 AVAILABLE_STATUS = "available"
 VENUE_STATUSES = frozenset({"available", "maintenance", "unavailable"})
+STATUS_LABELS_AR = {"available": "متاحة", "maintenance": "صيانة", "unavailable": "غير متاحة"}
 
 FIXED = "fixed"
 FLEXIBLE = "flexible"
+
+# How attendance is known. "registration": a guaranteed, pre-registered count.
+# "open": walk-in, so attendance is an estimate and the attendance model may warn.
+ADMISSION_OPEN = "open"
+ADMISSION_REGISTRATION = "registration"
+ADMISSION_LABELS_AR = {ADMISSION_OPEN: "حضور عام", ADMISSION_REGISTRATION: "تسجيل مسبق"}
+ADMISSION_ALIASES = {
+    "open": ADMISSION_OPEN, "walk-in": ADMISSION_OPEN, "public": ADMISSION_OPEN,
+    "عام": ADMISSION_OPEN, "حضور عام": ADMISSION_OPEN,
+    "registration": ADMISSION_REGISTRATION, "registered": ADMISSION_REGISTRATION,
+    "تسجيل": ADMISSION_REGISTRATION, "تسجيل مسبق": ADMISSION_REGISTRATION,
+}
+
+# Objective levels a client can reorder, highest first by default.
+PRIORITY_LEVELS = ("keep_approved", "schedule_count", "stability", "preferences", "room_fit")
+PRIORITY_LABELS_AR = {
+    "keep_approved": "الحفاظ على الفعاليات المعتمدة",
+    "schedule_count": "جدولة أكبر عدد من الفعاليات",
+    "stability": "استقرار الجدول (أقل تغيير)",
+    "preferences": "تحقيق التفضيلات",
+    "room_fit": "ملاءمة حجم القاعة",
+}
 
 
 @dataclass(frozen=True)
@@ -23,6 +46,11 @@ class EngineConfig:
 
     # Venue setup time may run past closing time. The event itself never may.
     allow_setup_after_close: bool = True
+
+    # Client rules.
+    priorities: tuple[str, ...] = PRIORITY_LEVELS
+    # Events sharing a non-empty `track` may not run at the same time.
+    tracks_no_overlap: bool = False
 
     solver_time_limit_seconds: float = 20.0
     solver_workers: int = 1
@@ -57,6 +85,10 @@ class EngineConfig:
             found.append("طول الشريحة الزمنية يجب أن يكون موجبًا.")
         if self.solver_time_limit_seconds <= 0:
             found.append("مهلة المحلل يجب أن تكون موجبة.")
+        if sorted(self.priorities) != sorted(PRIORITY_LEVELS):
+            found.append(
+                "ترتيب الأولويات يجب أن يحتوي كل الأهداف مرة واحدة: " + "، ".join(PRIORITY_LEVELS) + "."
+            )
         return found
 
 
