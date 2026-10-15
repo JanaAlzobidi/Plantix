@@ -28,6 +28,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from engine import attendance_model
 from engine import (
     ApprovalError,
     DataPaths,
@@ -45,6 +46,8 @@ from engine.storage import read_csv
 ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
 RUNTIME_MARKER = ".plantix-runtime"
+HISTORY_FILE = "attendance_history.csv"
+ALERT_MIN_INCREASE = 0.15  # alerts start at a predicted 15% over the owner's estimate
 
 DAY_NAMES = ["الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
 MONTHS = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو",
@@ -78,6 +81,8 @@ class ProgramIn(BaseModel):
     fixed_start: str | None = None
     fixed_venue: str | None = None
     owner: str | None = None  # the requesting party; None keeps the current owner
+    field: str | None = None     # المجال; None keeps the current value
+    audience: str | None = None  # الفئة المستهدفة; None keeps the current value
 
 
 class ReportIn(BaseModel):
@@ -150,6 +155,20 @@ def _conflicts(result) -> int:
     return found
 
 
+def _events_noun(n: int) -> str:
+    """Arabic counted noun: 3-10 take the plural, everything else the singular."""
+    return "فعاليات" if 3 <= n % 100 <= 10 else "فعالية"
+
+
+def _change_words(pct: int | None, prefix: str = "") -> str:
+    """'زيادة 52٪' / 'انخفاض 21٪' — words instead of a sign, which reorders badly in RTL text."""
+    if pct is None:
+        return ""
+    if pct == 0:
+        return "دون تغيير"
+    return f"{prefix}{'زيادة' if pct > 0 else 'انخفاض'} {abs(pct)}٪"
+
+
 def _ratio(value: str) -> tuple[int, int]:
     met, total = (value or "0/0").split("/")
     return int(met), int(total)
@@ -164,6 +183,11 @@ class Workspace:
         self.reference_date = reference_date
         self.freeze_days = freeze_days
         self.lock = threading.RLock()
+        self.model, self.model_error = None, None
+        try:
+            self.model = attendance_model.load(self.source / HISTORY_FILE)
+        except ValueError as exc:
+            self.model_error = str(exc)
         self.reset()
 
     # ---- setup
@@ -183,14 +207,17 @@ class Workspace:
             self.programs, self.venues, self.approved = load_inputs(self.paths)
             if "admission" not in self.programs.columns:
                 self.programs["admission"] = ADMISSION_OPEN
-            if "owner" not in self.programs.columns:
-                self.programs["owner"] = ""
+            for column in ("owner", "field", "audience"):
+                if column not in self.programs.columns:
+                    self.programs[column] = ""
             self.config = EngineConfig()
             self.lock_slots: dict[str, tuple[str, str, str]] = {}
             self.notified: set[str] = set()
             self.owner_of: dict[str, str] = dict(zip(self.programs["program_id"], self.programs["owner"]))
             self.reports: list[dict] = []
             self.notifications: list[dict] = []
+            self.alert_decisions: dict[str, dict] = {}   # pid -> {"status", "attendance"}
+            self.forecast_applied: dict[str, dict] = {}  # pid -> {"from", "to", "forecast"}
             self.refresh()
 
     # ---- engine
@@ -258,8 +285,135 @@ class Workspace:
                           "venue_id": text(r["fixed_venue_id"])} if fixed else None,
                 "locked": pid in self.lock_slots,
                 "owner": text(r.get("owner", "")),
+                "field": text(r.get("field", "")), "audience": text(r.get("audience", "")),
+                "forecast": self.forecast_json(r),
             })
         return out
+
+    # ---- attendance forecast
+
+    def forecast_json(self, record) -> dict | None:
+        """The model's view of one event; for an accepted alert, the forecast it was based on."""
+        pid = record.get("program_id")
+        applied = self.forecast_applied.get(pid)
+        attendance = parse_int(record.get("attendance_value")) or 0
+        if applied and applied["to"] == attendance:
+            return dict(applied["forecast"], applied=True, original=applied["from"])
+        if self.model is None:
+            return None
+        f = self.model.forecast(record)
+        if f is None:
+            return None
+        ev = f.evidence
+        return {"increase_pct": round(100 * f.increase), "predicted": f.predicted, "expected": attendance,
+                "parts": f.parts, "evidence": {"events": ev["events"], "above": ev["above"],
+                                               "mean_pct": None if ev["mean_increase"] is None else round(100 * ev["mean_increase"])},
+                "combo": f"{text(record.get('field'))} × {text(record.get('audience'))}",
+                "applied": False, "original": None}
+
+    def alerts_json(self, programs_json, venues_json, schedule_json) -> list[dict]:
+        """Open events whose predicted crowd outgrows the room they are scheduled in."""
+        venues = {v["id"]: v for v in venues_json}
+        slots = {s["program_id"]: s for s in schedule_json}
+        out = []
+        for p in programs_json:
+            f = p["forecast"]
+            if not f or f["applied"] or f["increase_pct"] < 100 * ALERT_MIN_INCREASE or p["id"] not in slots:
+                continue
+            decision = self.alert_decisions.get(p["id"])
+            if decision and decision["attendance"] == p["attendance"]:
+                continue
+            venue = venues.get(slots[p["id"]]["venue_id"])
+            if venue is None or f["predicted"] <= venue["capacity"]:
+                continue
+            need = set(p["equipment"])
+            bigger = [v["name"] for v in venues_json if v["status"] == AVAILABLE_STATUS
+                      and v["capacity"] >= f["predicted"] and need <= set(v["equipment"])]
+            if p["time_type"] == "fixed":
+                kind, suggestion = "fixed", "موعدها وقاعتها ثابتان: جهّز شاشة عرض خارج القاعة، أو اقترح على صاحبها التسجيل المسبق."
+            elif p["locked"]:
+                kind, suggestion = "locked", "الموعد مقفل: فُكّ القفل أولًا ليتمكن المحرك من نقلها إلى قاعة أكبر."
+            elif not bigger:
+                kind, suggestion = "no_room", "لا توجد قاعة متاحة تتسع لهذا العدد: اقترح على صاحبها التسجيل المسبق."
+            else:
+                kind = "flexible"
+                suggestion = (f"إذا قبلت، يصبح الحضور {f['predicted']} ويختار المحرك قاعة تتسع "
+                              f"({'، '.join(bigger)}).")
+            ev = f["evidence"]
+            evidence = (f"في الدورات السابقة: {ev['above']} من أصل {ev['events']} {_events_noun(ev['events'])} بمزيج "
+                        f"«{f['combo']}» تجاوزت العدد المتوقع، {_change_words(ev['mean_pct'], 'بمتوسط ')}." if ev["events"] else
+                        f"لا توجد فعاليات سابقة بالمزيج «{f['combo']}»؛ التوقع من المجال والفئة كلٌّ على حدة.")
+            out.append({
+                "program_id": p["id"], "name": p["name"], "kind": kind, "can_apply": kind == "flexible",
+                "expected": p["attendance"], "predicted": f["predicted"], "increase_pct": f["increase_pct"],
+                "venue_id": venue["id"], "venue_name": venue["name"], "capacity": venue["capacity"],
+                "bigger_venues": bigger, "combo": f["combo"], "parts": f["parts"],
+                "message": (f"يتوقع النموذج نحو {f['predicted']} شخصًا بدل {p['attendance']} "
+                            f"({_change_words(f['increase_pct'])})، و{venue['name']} تتسع لـ{venue['capacity']} فقط."),
+                "evidence": evidence, "suggestion": suggestion,
+            })
+        return out
+
+    def forecast_state(self, world) -> dict:
+        return {
+            "enabled": self.model is not None, "error": self.model_error,
+            "card": self.model.card if self.model else None,
+            "fields": self.model.fields if self.model else [],
+            "audiences": self.model.audiences if self.model else [],
+            "min_increase_pct": round(100 * ALERT_MIN_INCREASE),
+            "alerts": self.alerts_json(world["programs"], world["venues"], world["schedule"]),
+        }
+
+    def find_alert(self, pid: str) -> dict:
+        world = self.world_json(self.result, self.programs, self.venues, self.config)
+        for a in self.alerts_json(world["programs"], world["venues"], world["schedule"]):
+            if a["program_id"] == pid:
+                return a
+        raise HTTPException(404, "لا يوجد تنبيه حضور لهذه الفعالية.")
+
+    def accept_alert(self, pid: str) -> dict:
+        with self.lock:
+            alert = self.find_alert(pid)
+            if not alert["can_apply"]:
+                raise HTTPException(400, alert["suggestion"])
+            record = self.programs.loc[self.programs["program_id"] == pid].iloc[0].to_dict()
+            forecast = self.forecast_json(record)
+            df = self.programs.copy()
+            df.loc[df["program_id"] == pid, "attendance_value"] = str(alert["predicted"])
+            result = self.run(df, self.venues, self.config)
+            if result.status == "INVALID_DATA":
+                raise HTTPException(422, {"message": "تعذّر تطبيق التوقع.", "errors": _errors(result)})
+            before = _slot_map(self.result).get(pid)
+            self.programs = df
+            self.forecast_applied[pid] = {"from": alert["expected"], "to": alert["predicted"], "forecast": forecast}
+            self.alert_decisions[pid] = {"status": "accepted", "attendance": alert["predicted"]}
+            self.refresh()
+            after = _slot_map(self.result).get(pid)
+            vnames = dict(zip(self.venues["venue_id"], self.venues["venue_name"]))
+            return {"name": alert["name"], "predicted": alert["predicted"],
+                    "moved": before != after, "scheduled": after is not None,
+                    "venue_name": vnames.get(after[2], after[2]) if after else None}
+
+    def dismiss_alert(self, pid: str):
+        with self.lock:
+            alert = self.find_alert(pid)
+            self.alert_decisions[pid] = {"status": "dismissed", "attendance": alert["expected"]}
+
+    def forecast_for_check(self, df: pd.DataFrame, pid: str, placement, venues_json) -> dict | None:
+        if self.model is None:
+            return None
+        record = df.loc[df["program_id"] == pid].iloc[0].to_dict()
+        if attendance_model.admission_of(record) != ADMISSION_OPEN:
+            return {"status": "registration"}
+        if not self.model.knows(record.get("field", ""), record.get("audience", "")):
+            return {"status": "unknown"}
+        f = self.model.forecast(record)
+        capacity = None
+        if placement:
+            capacity = next((v["capacity"] for v in venues_json if v["id"] == placement["venue_id"]), None)
+        return {"status": "ok", "increase_pct": round(100 * f.increase), "predicted": f.predicted,
+                "capacity": capacity, "over": capacity is not None and f.predicted > capacity
+                and f.increase >= ALERT_MIN_INCREASE}
 
     def schedule_json(self, result) -> list[dict]:
         kinds = dict(zip(result.changes["program_id"], result.changes["change_type"])) if not result.changes.empty else {}
@@ -319,6 +473,8 @@ class Workspace:
             because = ""
             if old and old["venue_id"] in open_reports:
                 because = f" بسبب {open_reports[old['venue_id']]['title']}"
+            elif pid in self.forecast_applied:
+                because = " لاستيعاب زيادة الحضور المتوقعة"
             if kind == "new":
                 message = (f"جُدولت «{name}» يوم {long(new)} من {new['start']} إلى {ends.get(pid, '')} "
                            f"في {vnames.get(new['venue_id'], new['venue_id'])}.")
@@ -377,6 +533,7 @@ class Workspace:
                 "owners": owners, "reports": self.reports, "notifications": self.notifications,
                 "notified": sorted(self.notified),
                 "approved": approved, "changes": self.changes_json(self.result),
+                "forecast": self.forecast_state(world),
                 "equipment": [{"id": e, "label": EQUIPMENT_AR.get(e, e)} for e in catalog],
                 "warnings": self.result.issues.loc[self.result.issues["severity"] == "warning", "message"].tolist()
                 if not self.result.issues.empty else [],
@@ -406,6 +563,10 @@ class Workspace:
             "admission": p.admission or ADMISSION_OPEN,
             "owner": (p.owner.strip() if p.owner is not None else self.owner_of.get(pid, "")),
         }
+        if p.field is not None:
+            row["field"] = p.field.strip()
+        if p.audience is not None:
+            row["audience"] = p.audience.strip()
         df = self.programs.copy()
         for column in row:
             if column not in df.columns:
@@ -451,7 +612,8 @@ class Workspace:
                               "label": REASON_LABELS.get(miss.iloc[0]["reason_code"], "")}
             return {"ok": True, "errors": [], "compatible": compatible, "placement": placement,
                     "reason": reason, "moved_approved": moved_approved, "rearranged": rearranged,
-                    "lost": lost, "solve_seconds": result.summary.get("solve_seconds")}
+                    "lost": lost, "solve_seconds": result.summary.get("solve_seconds"),
+                    "forecast": self.forecast_for_check(df, target, placement, venues)}
 
     def save_program(self, pid: str | None, p: ProgramIn) -> str:
         with self.lock:
@@ -464,6 +626,9 @@ class Workspace:
                 raise HTTPException(422, {"message": "لم تُحفظ: البيانات فيها مشكلة.", "errors": _errors(result)})
             self.programs = df
             self.owner_of[target] = text(df.loc[df["program_id"] == target, "owner"].iloc[0])
+            applied = self.forecast_applied.get(target)
+            if applied and applied["to"] != p.attendance:
+                self.forecast_applied.pop(target)
             self.notified.discard(target)
             self.refresh()
             return target
@@ -474,6 +639,8 @@ class Workspace:
                 raise HTTPException(404, "الفعالية غير موجودة.")
             self.programs = self.programs[self.programs["program_id"] != pid].reset_index(drop=True)
             self.lock_slots.pop(pid, None)
+            self.alert_decisions.pop(pid, None)
+            self.forecast_applied.pop(pid, None)
             self.refresh()
 
     def set_lock(self, pid: str, locked: bool):
@@ -838,6 +1005,16 @@ def create_app(data_dir=ROOT / "data", runtime_dir=ROOT / "runtime",
     def resolve_report(rid: str):
         report = ws.resolve_report(rid)
         return {"report": report, "state": ws.state()}
+
+    @app.post("/api/alerts/{pid}/accept")
+    def accept_alert(pid: str):
+        result = ws.accept_alert(pid)
+        return {"ok": True, **result, "state": ws.state()}
+
+    @app.post("/api/alerts/{pid}/dismiss")
+    def dismiss_alert(pid: str):
+        ws.dismiss_alert(pid)
+        return {"ok": True, "state": ws.state()}
 
     @app.post("/api/reset")
     def reset():
