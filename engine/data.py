@@ -15,7 +15,10 @@ from datetime import date, datetime, time
 import pandas as pd
 
 from .config import (
+    ADMISSION_ALIASES,
+    ADMISSION_OPEN,
     AVAILABLE_STATUS,
+    STATUS_LABELS_AR,
     FIXED,
     FLEXIBLE,
     VENUE_STATUSES,
@@ -93,6 +96,8 @@ class Program:
     fixed_venue_id: str | None = None
     preferred_dates: frozenset[date] = frozenset()
     preferred_slots: tuple[tuple[int, int], ...] = ()
+    track: str = ""
+    admission: str = ADMISSION_OPEN
 
     @property
     def is_fixed(self) -> bool:
@@ -319,6 +324,8 @@ def _parse_programs(df, venues, venue_ids_seen, config, log) -> tuple[dict[str, 
     seen: set[str] = set()
     reported_dups: set[str] = set()
     horizon = (config.start_date, config.end_date)
+    has_track = "track" in df.columns
+    has_admission = "admission" in df.columns
 
     for position, row in enumerate(df.to_dict("records")):
         line = position + 2
@@ -365,6 +372,16 @@ def _parse_programs(df, venues, venue_ids_seen, config, log) -> tuple[dict[str, 
         time_type = text(row["time_type"]).casefold()
         if time_type not in (FIXED, FLEXIBLE):
             err("INVALID_TIME_TYPE", f"نوع الفعالية «{text(row['time_type'])}» غير صالح. القيم المسموحة: fixed أو flexible.")
+
+        admission = ADMISSION_OPEN
+        if has_admission and not is_blank(row["admission"]):
+            admission = ADMISSION_ALIASES.get(normalize_item(text(row["admission"])))
+            if admission is None:
+                err(
+                    "INVALID_ADMISSION",
+                    f"نوع الحضور «{text(row['admission'])}» غير صالح. القيم المسموحة: open (حضور عام) "
+                    "أو registration (تسجيل مسبق).",
+                )
 
         requirements = frozenset(normalize_item(x) for x in split_list(row["venue_requirements"]))
 
@@ -441,7 +458,7 @@ def _parse_programs(df, venues, venue_ids_seen, config, log) -> tuple[dict[str, 
                 if not venue.available:
                     err(
                         "FIXED_VENUE_UNAVAILABLE",
-                        f"القاعة المحددة {venue.name} ({venue.venue_id}) حالتها «{venue.status}» وليست متاحة.",
+                        f"القاعة المحددة {venue.name} ({venue.venue_id}) حالتها «{STATUS_LABELS_AR.get(venue.status, venue.status)}» وليست متاحة.",
                     )
                 if attendance is not None and venue.capacity < attendance:
                     err(
@@ -485,6 +502,8 @@ def _parse_programs(df, venues, venue_ids_seen, config, log) -> tuple[dict[str, 
                 fixed_venue_id=fixed_venue_id,
                 preferred_dates=frozenset(preferred_dates),
                 preferred_slots=tuple(sorted(preferred_slots)),
+                track=text(row["track"]) if has_track else "",
+                admission=admission,
             )
 
     return programs, seen
@@ -503,6 +522,27 @@ def _warn_unknown_requirements(programs, venues, log):
                 "تحقق من كتابتها.",
                 program_id=program.program_id,
             )
+
+
+def _check_fixed_track_conflicts(programs, config, log):
+    if not config.tracks_no_overlap:
+        return
+    by_track: dict[tuple, list] = {}
+    for p in programs.values():
+        if p.is_fixed and p.track:
+            by_track.setdefault((p.track, p.fixed_date), []).append(p)
+    for (track, day), items in by_track.items():
+        items.sort(key=lambda p: p.fixed_start)
+        for i, a in enumerate(items):
+            for b in items[i + 1:]:
+                if b.fixed_start >= a.fixed_start + a.duration:
+                    break
+                log.error(
+                    "FIXED_TRACK_CONFLICT",
+                    f"الفعاليتان الثابتتان {a.program_id} ({a.name}) و{b.program_id} ({b.name}) "
+                    f"من نفس المسار «{track}» وتتزامنان يوم {day}؛ قاعدة العميل تمنع تزامن فعاليات المسار الواحد.",
+                    program_id=a.program_id,
+                )
 
 
 def _check_fixed_conflicts(programs, venues, log):
@@ -642,6 +682,7 @@ def prepare_inputs(programs_df, venues_df, current_df, reference_date,
     _warn_unknown_requirements(programs, venues, log)
     if not log.has_errors:
         _check_fixed_conflicts(programs, venues, log)
+        _check_fixed_track_conflicts(programs, config, log)
 
     if current_df is not None and isinstance(current_df, pd.DataFrame) and current_df.empty:
         current_df = None
