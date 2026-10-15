@@ -1,2 +1,0 @@
-program_id,program_name,description,duration_min,attendance_value,attendance_mode,target_audience,program_category,program_domain,venue_requirements,owner,time_type,fixed_date,fixed_start_time,fixed_venue_id,preferred_dates,preferred_time_slots
-X003,Unavailable Equipment Program,Synthetic test program: Unavailable Equipment Program,60,10,estimated,Public,Workshop,Technology,quantum_projector,Test Team,flexible,,,,2026-10-17;2026-10-18;2026-10-19,morning;afternoon

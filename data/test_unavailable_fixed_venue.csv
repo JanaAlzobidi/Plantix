@@ -1,2 +1,0 @@
-program_id,program_name,description,duration_min,attendance_value,attendance_mode,target_audience,program_category,program_domain,venue_requirements,owner,time_type,fixed_date,fixed_start_time,fixed_venue_id,preferred_dates,preferred_time_slots
-X001,Fixed Event With Unavailable Venue,Synthetic test program: Fixed Event With Unavailable Venue,60,15,estimated,Public,Workshop,Technology,computers,Test Team,fixed,2026-10-17,11:00,V08,2026-10-17,morning

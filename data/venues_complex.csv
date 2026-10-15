@@ -1,9 +1,0 @@
-venue_id,venue_name,capacity,equipment,min_setup_time_min,status,zone
-V01,Main Auditorium,220,projector;microphone;stage;lighting;accessibility,30,available,A
-V02,Innovation Classroom,40,computers;projector;power;accessibility,15,available,B
-V03,Multipurpose Hall,130,stage;microphone;lighting;projector;power;display_booths;accessibility,30,available,A
-V04,VR and AI Lab,30,computers;vr_headsets;power;projector,20,available,C
-V05,Exhibition Gallery,100,display_booths;power;accessibility;projector,45,available,D
-V06,Community Studio,80,microphone;projector;computers;accessibility,15,available,B
-V07,Outdoor Innovation Court,150,stage;power;display_booths;lighting,45,available,E
-V08,Media Room,24,computers;projector;microphone,10,under_maintenance,C
