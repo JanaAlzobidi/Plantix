@@ -25,7 +25,7 @@ class EngineConfig:
     allow_setup_after_close: bool = True
 
     solver_time_limit_seconds: float = 20.0
-    solver_workers: int = 8
+    solver_workers: int = 1
 
     @property
     def day_start_min(self) -> int:
