@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ar" dir="rtl" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plantix — منظم البرامج</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Readex+Pro:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="/static/styles.css">
+<script>try { document.documentElement.dataset.theme = localStorage.getItem('plantix-theme') || 'light'; } catch (e) {}</script>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 6h9"/><path d="M10 12h9"/><path d="M5 18h6"/></svg></span>
+      <span class="brand-name">Plantix</span>
+    </div>
+
+    <div class="search-wrap" id="search-wrap">
+      <label class="search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <span class="sr-only">بحث عن فعالية بالاسم</span>
+        <input id="search" type="search" placeholder="ابحث عن فعالية بالاسم…" autocomplete="off" aria-controls="search-results">
+      </label>
+      <div id="search-results"></div>
+    </div>
+
+    <div class="top-end">
+      <div class="roles" role="group" aria-label="الدور">
+        <button type="button" class="role" data-act="role" data-role="صاحب الفعالية" aria-pressed="false">صاحب الفعالية</button>
+        <button type="button" class="role" aria-pressed="true">منظم البرامج</button>
+        <button type="button" class="role" data-act="role" data-role="مشرف القاعات" aria-pressed="false">مشرف القاعات</button>
+      </div>
+      <button type="button" class="btn btn-secondary" id="theme-btn" data-act="theme"></button>
+      <button type="button" class="icon-btn" id="bell" data-act="bell" aria-label="الإشعارات"></button>
+    </div>
+  </header>
+
+  <div id="banner"></div>
+
+  <div class="layout">
+    <aside class="aside" id="aside" aria-label="القرارات"></aside>
+    <main class="main">
+      <section class="kpis" id="kpis" aria-label="حالة الجدول"></section>
+      <section class="card schedule" id="schedule" aria-label="الجدولة"></section>
+    </main>
+  </div>
+
+  <div id="overlay"></div>
+  <div id="feedback" aria-live="polite"></div>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>
