@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+data/proposal/
+data/approved_history/
+.DS_Store
