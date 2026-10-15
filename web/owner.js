@@ -47,6 +47,7 @@ function render() {
       <div class="req-meta">${h(meta)}${p.equipment.length ? ' · ' + h(p.equipment.map((e) => eqLabel(d, e)).join('، ')) : ''}</div>
       <div class="req-line">${h(st.line)}</div>
       ${st.sub ? `<div class="req-sub">${h(st.sub)}</div>` : ''}
+      ${p.forecast && p.forecast.applied ? `<div class="req-sub">عدّل فريق البرامج الحضور المتوقع من ${p.forecast.original} إلى ${p.forecast.predicted} بناءً على الدورات السابقة، لتُجهَّز قاعة تتسع.</div>` : ''}
       ${canWithdraw ? `<div class="row-actions"><button type="button" class="btn btn-ghost-danger btn-sm" data-act="withdraw" data-id="${h(p.id)}">سحب الطلب</button></div>` : ''}
     </div>`;
   }).join('') : `<div class="empty-note">${U.filter === 'all' ? 'لا توجد طلبات باسم هذه الجهة بعد. ابدأ بـ«طلب فعالية جديدة».' : 'لا توجد طلبات بهذه الحالة.'}</div>`;
@@ -59,14 +60,15 @@ function render() {
 
 // ---------------------------------------------------------------- new request form
 function openForm() {
-  U.form = { name: '', dur: '60', att: '30', adm: 'open', eq: ['projector'], prefDays: [], slot: '' };
+  U.form = { name: '', dur: '60', att: '30', adm: 'open', eq: ['projector'], prefDays: [], slot: '', field: '', audience: '' };
   U.check = null; U.panel = 'form';
   renderOverlay(true); queueCheck(0);
 }
 function body() {
   const f = U.form;
   return { name: f.name.trim(), duration: parseInt(f.dur, 10) || 0, attendance: parseInt(f.att, 10) || 0, equipment: f.eq,
-    time_type: 'flexible', admission: f.adm, preferred_dates: f.prefDays, preferred_slot: f.slot, owner: U.org };
+    time_type: 'flexible', admission: f.adm, preferred_dates: f.prefDays, preferred_slot: f.slot, owner: U.org,
+    field: f.field, audience: f.audience };
 }
 function clientErrors() {
   const f = U.form, out = [];
@@ -96,7 +98,11 @@ function liveHTML() {
     const c = U.check, out = [];
     out.push(c.compatible.length ? ['ok', `${c.compatible.length === 1 ? 'قاعة واحدة تناسب' : c.compatible.length + ' قاعات تناسب'} الحضور والمعدات`] : ['warn', 'لا توجد قاعة متاحة تجمع السعة والمعدات المطلوبة']);
     out.push(c.placement ? ['ok', 'يوجد موعد متاح، وسيقترحه المحرك على فريق البرامج'] : ['warn', 'قد لا يُجدول: ' + (c.reason ? c.reason.reason : 'لا يوجد وقت متاح')]);
-    out.push(f.adm === 'registration' ? ['info', 'تسجيل مسبق: العدد مؤكد'] : ['info', 'حضور عام: العدد تقديري، وقد يراجعه فريق البرامج حسب الدورات السابقة']);
+    const fc = c.forecast;
+    if (f.adm === 'registration' || (fc && fc.status === 'registration')) out.push(['info', 'تسجيل مسبق: العدد مؤكد']);
+    else if (fc && fc.status === 'ok' && fc.increase_pct >= 15) out.push(['warn', `تشير الدورات السابقة إلى حضور أكبر من تقديرك (نحو ${fc.predicted} شخصًا)؛ قد يعدّله فريق البرامج، أو اختر التسجيل المسبق لضبط العدد`]);
+    else if (fc && fc.status === 'ok') out.push(['ok', 'تقديرك للحضور قريب مما تشير إليه الدورات السابقة']);
+    else out.push(['info', 'حضور عام: العدد تقديري، وقد يراجعه فريق البرامج حسب الدورات السابقة']);
     rows = out.map(([k, t]) => checkRow(k, t)).join('');
   }
   const blocked = errs.length > 0 || (U.check && !U.check.ok);
@@ -107,6 +113,9 @@ function liveHTML() {
       <button type="button" class="btn btn-primary btn-lg" data-act="submit" ${blocked ? 'disabled' : ''}>إرسال الطلب لفريق البرامج</button></div>`;
 }
 function renderLive() { const el = $('#form-live'); if (el && U.form) el.innerHTML = liveHTML(); }
+function sel(key, label, value, options) {
+  return `<label class="field">${label}<select class="input" data-input="${key}"><option value="">غير محدد</option>${options.map((o) => `<option value="${h(o)}" ${o === value ? 'selected' : ''}>${h(o)}</option>`).join('')}</select></label>`;
+}
 function formHTML() {
   const d = S.data, f = U.form;
   const chip = (act, val, on, label, dis) => `<button type="button" class="tchip" data-act="${act}" data-val="${h(val)}" aria-pressed="${on}" ${dis ? 'disabled' : ''}>${h(label)}</button>`;
@@ -120,6 +129,9 @@ function formHTML() {
       <div class="field">نوع الحضور<div class="chips" style="gap:6px">
         <button type="button" class="pill" data-act="adm" data-val="open" aria-pressed="${f.adm === 'open'}">حضور عام</button>
         <button type="button" class="pill" data-act="adm" data-val="registration" aria-pressed="${f.adm === 'registration'}">تسجيل مسبق</button></div></div>
+      ${sel('field', 'المجال', f.field, (d.forecast && d.forecast.fields) || [])}
+      ${sel('audience', 'الفئة المستهدفة', f.audience, (d.forecast && d.forecast.audiences) || [])}
+      <div class="field muted" style="font-size:12px;font-weight:400;justify-content:end">يساعدان فريق البرامج على توقع الحضور من الدورات السابقة.</div>
       <div class="field span3">المعدات المطلوبة<div class="chips" style="gap:6px">${d.equipment.map((e) => chip('eq', e.id, f.eq.includes(e.id), e.label)).join('')}</div></div>
     </div>
     <div class="form-sect">

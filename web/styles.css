@@ -377,3 +377,14 @@ a.role:hover:not([aria-current="page"]) { color: var(--ink); }
 .aside > .card.fill { min-height: 0; flex: 1; display: flex; flex-direction: column; }
 @media (max-width: 900px) { .venue-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .org-bar .btn { margin-inline-start: 0; } }
 .tchip:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ---- attendance forecast (ML alerts) */
+.btn-ghost { border: 1px solid transparent; background: transparent; color: var(--primary-text); }
+.btn-ghost:hover { background: var(--surface-2); }
+.alert-item { border-inline-start: 3px solid var(--blue-text); }
+.alert-item .chip svg { margin-inline-end: 3px; vertical-align: -2px; }
+.box.forecast { gap: 5px; }
+.box.forecast .parts { display: flex; flex-direction: column; gap: 2px; margin-top: 3px; }
+.box.forecast .part { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--ink-2); padding: 2px 0; border-bottom: 1px dashed var(--line); }
+.box.forecast .part b { font-family: 'Readex Pro', 'IBM Plex Sans Arabic', sans-serif; font-weight: 600; color: var(--ink); }
+.box.forecast .part.total { border-bottom: 0; font-weight: 600; color: var(--ink); }

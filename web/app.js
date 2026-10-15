@@ -31,6 +31,7 @@ const checkRow = (kind, text) => `<div class="check">${ICON[kind === 'ok' ? 'che
 const TYPE_LABEL = { new: 'جديدة', unchanged: 'معتمدة', moved: 'تغيّرت', not_scheduled: 'لم تُجدول', dropped: 'أُسقطت', removed: 'حُذفت' };
 const TYPE_CHIP = { new: 'chip-blue', unchanged: 'chip-green', moved: 'chip-amber', not_scheduled: 'chip-danger', dropped: 'chip-danger', removed: '' };
 const KIND_CLASS = { new: 'k-new', unchanged: 'k-approved', moved: 'k-moved' };
+ICON.spark = () => svg('<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/>', 13);
 const SLOT_PRESETS = ['', '09:00-12:00', '12:00-15:00', '15:00-18:00'];
 const WEEKDAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const MONTHS = ['يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو', 'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'];
@@ -124,7 +125,7 @@ function renderHeader() {
   const dark = U.theme === 'dark';
   $('#theme-btn').innerHTML = `${dark ? ICON.sun() : ICON.moon()}<span>${dark ? 'صباحي' : 'ليلي'}</span>`;
   $('#theme-btn').setAttribute('aria-label', dark ? 'التبديل إلى النمط الصباحي' : 'التبديل إلى النمط الليلي');
-  const n = S.data ? S.data.unscheduled.length + S.data.reports.filter((r) => r.status === 'open').length : 0;
+  const n = S.data ? S.data.unscheduled.length + S.data.reports.filter((r) => r.status === 'open').length + alerts().length : 0;
   $('#bell').innerHTML = ICON.bell() + (n ? `<span class="badge">${n}</span>` : '');
 }
 function searchResults() {
@@ -150,6 +151,28 @@ function renderSearch() {
 }
 
 // ------------------------------------------------------------------ aside
+
+function alerts() { return (S.data && S.data.forecast && S.data.forecast.alerts) || []; }
+function pts(n) { return `<bdi dir="ltr">${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(1).replace(/\.0$/, '')}</bdi>`; }
+function changeWords(pct) { return pct === 0 ? 'دون تغيير' : `${pct > 0 ? 'زيادة' : 'انخفاض'} ${Math.abs(pct)}٪`; }
+function forecastHTML(p, slot, ix) {
+  const fc = S.data.forecast;
+  if (!fc || !fc.enabled) return '';
+  if (p.admission === 'registration') return `<div class="box"><div class="k">توقع الحضور</div><div style="font-size:13px">تسجيل مسبق: العدد مؤكد، فلا يتنبأ النموذج بحضورها.</div></div>`;
+  const f = p.forecast;
+  if (!f) return `<div class="box"><div class="k">توقع الحضور</div><div style="font-size:13px">حدّد المجال والفئة المستهدفة ليتنبأ النموذج بحضورها.</div></div>`;
+  const v = slot ? ix.v[slot.venue_id] : null;
+  const head = f.applied
+    ? `طُبّق التوقع: الحضور ${f.predicted} بدل ${f.original} (${changeWords(f.increase_pct)})`
+    : `يتوقع النموذج نحو ${f.predicted} شخصًا بدل ${f.expected} (${changeWords(f.increase_pct)})`;
+  const fit = v && !f.applied ? (f.predicted > v.capacity ? `<div class="bad-text" style="font-size:12.5px">أكبر من سعة ${h(v.name)} (${v.capacity})</div>` : `<div class="good" style="font-size:12.5px">تتسع له ${h(v.name)} (${v.capacity})</div>`) : '';
+  const parts = f.parts.map((x) => `<div class="part"><span>${h(x.label)}</span><b>${pts(x.points)}</b></div>`).join('');
+  const ev = f.evidence.events ? `مبني على ${f.evidence.events} من الفعاليات السابقة بمزيج «${h(f.combo)}»، تجاوز منها العدد المتوقع ${f.evidence.above}.` : `لا فعاليات سابقة بالمزيج «${h(f.combo)}».`;
+  return `<div class="box forecast"><div class="k">توقع الحضور · انحدار خطي من الدورات السابقة</div>
+    <div style="font-weight:700;font-size:14px">${h(head)}</div>${fit}
+    <div class="parts">${parts}<div class="part total"><span>المجموع (نقاط مئوية)</span><b>${pts(f.parts.reduce((a, x) => a + x.points, 0))}</b></div></div>
+    <div class="k">${ev}</div></div>`;
+}
 
 function asideHTML() {
   if (U.whatIf) return whatIfHTML();
@@ -191,10 +214,21 @@ function asideHTML() {
       ${r.note ? `<div class="fix">${h(r.note)}</div>` : ''}
       <div class="row-actions"><button type="button" class="btn btn-primary btn-sm" data-act="review" ${d.summary.can_approve ? '' : 'disabled'}>راجع الخطة واعتمد</button></div>
     </div>`).join('');
-  const pendingCount = d.unscheduled.length + d.reports.filter((r) => r.status === 'open').length;
+  const warn = alerts().map((a) => `<div class="inbox-item alert-item">
+      <div style="display:flex;align-items:center;gap:6px"><span class="chip chip-blue">${ICON.spark()}تنبيه احترازي</span><span class="muted" style="font-size:11.5px">توقع الحضور</span></div>
+      <div class="name">${h(a.name)}</div>
+      <div class="reason" title="${h(a.message)}">${h(a.message)}</div>
+      <div class="fix" title="${h(a.evidence)}">${h(a.evidence)}</div>
+      <div class="row-actions">${a.can_apply
+        ? `<button type="button" class="btn btn-primary btn-sm" data-act="alertAccept" data-id="${h(a.program_id)}">اقبل التوقع (${a.predicted})</button>
+           <button type="button" class="btn btn-secondary btn-sm" data-act="alertDismiss" data-id="${h(a.program_id)}">تجاهل</button>`
+        : `<button type="button" class="btn btn-secondary btn-sm" data-act="alertDismiss" data-id="${h(a.program_id)}">علمت</button>`}
+        <button type="button" class="btn btn-ghost btn-sm" data-act="details" data-id="${h(a.program_id)}">لماذا؟</button></div>
+    </div>`).join('');
+  const pendingCount = d.unscheduled.length + d.reports.filter((r) => r.status === 'open').length + alerts().length;
   return `<section class="card stack">
       <div class="card-head"><h2>يحتاج قرارك</h2><span class="count">${pendingCount}</span></div>
-      ${reports + inbox || '<div class="all-good">كل الفعاليات مجدولة. لا شيء ينتظرك.</div>'}
+      ${reports + warn + inbox || '<div class="all-good">كل الفعاليات مجدولة. لا شيء ينتظرك.</div>'}
     </section>${approval}`;
 }
 
@@ -402,7 +436,7 @@ function detailsHTML() {
   const approved = S.data.approved[p.id];
   const status = slot ? slot.status : 'not_scheduled';
   const chips = [p.time_type === 'fixed' ? 'موعد ثابت' : 'موعد مرن', `${p.duration} دقيقة`, `${p.attendance} شخص`,
-    p.admission === 'registration' ? 'تسجيل مسبق · عدد مؤكد' : 'حضور عام · عدد تقديري'].map((c) => `<span class="tag">${h(c)}</span>`).join('');
+    p.admission === 'registration' ? 'تسجيل مسبق · عدد مؤكد' : 'حضور عام · عدد تقديري', p.field, p.audience].filter(Boolean).map((c) => `<span class="tag">${h(c)}</span>`).join('');
   const equip = 'المعدات المطلوبة: ' + (p.equipment.length ? p.equipment.map(eqLabel).join('، ') : 'لا شيء');
   let main = '', why = '', lock = '', log, notify, editLabel = 'تعديل';
 
@@ -447,7 +481,7 @@ function detailsHTML() {
       <span class="chip ${TYPE_CHIP[status]}">${p.time_type === 'fixed' ? 'ثابتة · ' : ''}${TYPE_LABEL[status]}</span><h2>${h(p.name)}</h2></div>
       <button type="button" class="close-x" data-act="close" aria-label="إغلاق" data-autofocus>${ICON.close()}</button></div>
     <div class="chips" style="gap:6px">${chips}</div>
-    ${main}${lock}${why}
+    ${main}${forecastHTML(p, slot, ix)}${lock}${why}
     <div class="grid2"><div class="box" style="border:0"><div class="k">سجل التغيير</div><div style="font-size:13px">${h(log)}</div></div>
       <div class="box" style="border:0"><div class="k">صاحب الفعالية</div><div style="font-size:13px">${h(notify)}</div></div></div>
     <div class="drawer-actions">
@@ -461,10 +495,11 @@ function openForm(pid) {
   const firstOpen = (d.days.find((x) => !x.frozen) || d.days[0]).date;
   U.form = p ? {
     pid, name: p.name, dur: String(p.duration), att: String(p.attendance), adm: p.admission, eq: p.equipment.slice(), type: p.time_type,
+    field: p.field || '', audience: p.audience || '',
     prefDays: p.preferred_dates.slice(), slot: p.preferred_slots[0] || '',
     fd: (p.fixed && p.fixed.date) || (slot && slot.date) || firstOpen, ft: (p.fixed && p.fixed.start) || (slot && slot.start) || '13:00',
     fv: (p.fixed && p.fixed.venue_id) || (slot && slot.venue_id) || d.venues[0].id,
-  } : { pid: null, name: '', dur: '60', att: '50', adm: 'open', eq: ['projector', 'microphone'], type: 'flexible', prefDays: [], slot: '', fd: firstOpen, ft: '13:00', fv: d.venues[0].id };
+  } : { pid: null, name: '', dur: '60', att: '50', adm: 'open', eq: ['projector', 'microphone'], type: 'flexible', prefDays: [], slot: '', fd: firstOpen, ft: '13:00', fv: d.venues[0].id, field: '', audience: '' };
   U.check = null; U.panel = 'form'; U.whatIf = null; S.sc = null; U.searchOpen = false; U.unschedOpen = false;
   render(true);
   queueCheck(0);
@@ -473,7 +508,7 @@ function formBody() {
   const f = U.form;
   return {
     name: f.name.trim(), duration: parseInt(f.dur, 10) || 0, attendance: parseInt(f.att, 10) || 0, equipment: f.eq,
-    time_type: f.type, admission: f.adm, preferred_dates: f.prefDays, preferred_slot: f.slot,
+    time_type: f.type, admission: f.adm, preferred_dates: f.prefDays, preferred_slot: f.slot, field: f.field, audience: f.audience,
     fixed_date: f.type === 'fixed' ? f.fd : null, fixed_start: f.type === 'fixed' ? f.ft : null, fixed_venue: f.type === 'fixed' ? f.fv : null,
   };
 }
@@ -520,7 +555,7 @@ function formLiveHTML() {
     if (c.moved_approved.length) out.push(['warn', 'ستتحرك فعاليات معتمدة: ' + c.moved_approved.join('، ')]);
     if (c.lost.length) out.push(['warn', 'تخرج من الجدول: ' + c.lost.join('، ')]);
     if (c.rearranged) out.push(['info', `يعيد المحرك ترتيب ${c.rearranged} من الفعاليات الجديدة (لم يُبلَّغ أصحابها بعد)`]);
-    out.push(f.adm === 'registration' ? ['info', 'تسجيل مسبق: العدد مؤكد، فلا تخضع لتنبيهات الحضور'] : ['info', 'حضور عام: العدد تقديري، وقد تصلك تنبيهات حضور من الدورات السابقة']);
+    out.push(forecastRow(c.forecast));
     rows = out.map(([k, t]) => checkRow(k, t)).join('');
   }
   const blocked = errs.length > 0 || (U.check && !U.check.ok);
@@ -529,6 +564,16 @@ function formLiveHTML() {
     <div class="form-actions"><span class="muted" style="font-size:12.5px">يدخل التعديل في المقترح، ولا يُعتمد إلا بعد مراجعتك.</span>
       <button type="button" class="btn btn-secondary btn-lg first" data-act="close">إلغاء</button>
       <button type="button" class="btn btn-primary btn-lg" data-act="save" ${blocked ? 'disabled' : ''}>حفظ وإعادة الجدولة</button></div>`;
+}
+function forecastRow(fc) {
+  if (!fc) return ['info', 'حضور عام: العدد تقديري'];
+  if (fc.status === 'registration') return ['info', 'تسجيل مسبق: العدد مؤكد، فلا يتنبأ النموذج بحضورها'];
+  if (fc.status === 'unknown') return ['info', 'حدّد المجال والفئة المستهدفة ليتنبأ النموذج بالحضور من الدورات السابقة'];
+  if (fc.over) return ['warn', `يتوقع النموذج نحو ${fc.predicted} شخصًا (${changeWords(fc.increase_pct)})، أكبر من سعة القاعة (${fc.capacity}): سيصلك تنبيه احترازي`];
+  return ['ok', `يتوقع النموذج نحو ${fc.predicted} شخصًا (${changeWords(fc.increase_pct)})${fc.capacity ? '، والقاعة تتسع' : ''}`];
+}
+function selectHTML(key, label, value, options) {
+  return `<label class="field">${label}<select class="input" data-input="${key}"><option value="">غير محدد</option>${options.map((o) => `<option value="${h(o)}" ${o === value ? 'selected' : ''}>${h(o)}</option>`).join('')}</select></label>`;
 }
 function renderFormLive() { const el = $('#form-live'); if (el && U.form) el.innerHTML = formLiveHTML(); }
 function formHTML() {
@@ -545,6 +590,9 @@ function formHTML() {
       <div class="field">نوع الحضور<div class="chips" role="group" aria-label="نوع الحضور" style="gap:6px">
         <button type="button" class="pill" data-act="fAdm" data-val="open" aria-pressed="${f.adm === 'open'}">حضور عام</button>
         <button type="button" class="pill" data-act="fAdm" data-val="registration" aria-pressed="${f.adm === 'registration'}">تسجيل مسبق</button></div></div>
+      ${selectHTML('field', 'المجال', f.field, (d.forecast && d.forecast.fields) || [])}
+      ${selectHTML('audience', 'الفئة المستهدفة', f.audience, (d.forecast && d.forecast.audiences) || [])}
+      <div class="field muted" style="font-size:12px;font-weight:400;justify-content:end">يستخدمهما نموذج توقع الحضور، ولا يؤثران على قواعد الجدولة.</div>
       <div class="field span3">المعدات المطلوبة<div class="chips" role="group" aria-label="المعدات" style="gap:6px">
         ${d.equipment.map((e) => chip('fEq', e.id, f.eq.includes(e.id), e.label)).join('')}</div></div>
     </div>
@@ -665,6 +713,17 @@ const ACT = {
   edit(ds) { openForm(ds.id); },
   del(ds) { U.selected = ds.id; U.panel = 'delete'; render(); },
   review() { U.panel = 'review'; render(); },
+  async alertAccept(ds) {
+    const a = alerts().find((x) => x.program_id === ds.id);
+    if (!a) return;
+    await mutate('يطبّق التوقع ويعيد الجدولة…', () => api('POST', `/api/alerts/${encodeURIComponent(a.program_id)}/accept`),
+      (r) => (r.moved && r.venue_name ? `«${a.name}»: الحضور ${a.predicted} · نقلها المحرك إلى ${r.venue_name}` : `«${a.name}»: صار الحضور ${a.predicted}`) + ' · راجِع ثم اعتمد' + secs(r.state.summary.solve_seconds));
+  },
+  async alertDismiss(ds) {
+    const a = alerts().find((x) => x.program_id === ds.id);
+    if (!a) return;
+    await mutate('…', () => api('POST', `/api/alerts/${encodeURIComponent(a.program_id)}/dismiss`), `تم تجاهل التنبيه · يبقى حضور «${a.name}» ${a.expected}`);
+  },
   async lock() {
     const p = index(S.data).p[U.selected];
     await mutate(p.locked ? 'يفك القفل…' : 'يقفل الموعد…', () => api('POST', `/api/programs/${encodeURIComponent(p.id)}/lock`, { locked: !p.locked }),
@@ -752,7 +811,7 @@ document.addEventListener('input', (e) => {
   if (t.id === 'search') { U.q = t.value; U.searchOpen = true; U.searchIndex = 0; renderSearch(); return; }
   if (t.dataset.input && U.form) {
     const key = t.dataset.input;
-    U.form[key === 'name' ? 'name' : key === 'dur' ? 'dur' : key === 'att' ? 'att' : 'ft'] = t.value;
+    U.form[['name', 'dur', 'att', 'field', 'audience'].includes(key) ? key : 'ft'] = t.value;
     queueCheck();
     return;
   }
