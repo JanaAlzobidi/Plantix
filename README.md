@@ -46,7 +46,6 @@ Plantix/
 ├── tests/                  الاختبارات
 ├── server.py               السيرفر: يربط الواجهة بالمحرك
 ├── run.py                  تشغيل المحرك من الطرفية بدون واجهة
-├── app.py                  واجهة تجريبية قديمة (Streamlit)
 └── requirements.txt        المكتبات المطلوبة
 ```
 
@@ -138,7 +137,6 @@ Plantix/
 | الملف | وش يسوي |
 |---|---|
 | `run.py` | يشغّل المحرك من الطرفية ويطبع النتيجة: `python3 run.py propose --reference-date 2026-10-15 --freeze-days 2` ثم `python3 run.py approve`. |
-| `app.py` | واجهة تجريبية قديمة بـ Streamlit، من قبل الواجهة الجديدة. ما نستخدمها في العرض. |
 
 ### الاختبارات `tests/`
 
