@@ -198,3 +198,71 @@ def test_closing_a_venue_with_fixed_events_needs_the_organizer(client):
 def test_role_pages_are_served(client):
     for path in ("/", "/owner", "/venue"):
         assert client.get(path).status_code == 200
+
+
+# ---------------------------------------------------------------- owner requests wait for the organizer
+
+def request_body(**extra):
+    body = {"name": "ورشة الواقع المعزز", "owner": "أكاديمية التقنية", "category": "ورشة عمل",
+            "description": "تطبيق عملي على بناء تجربة واقع معزز بسيطة.", "duration": 60, "attendance": 25,
+            "admission": "registration", "audience": ["طلاب"], "field": ["تقنية", "ابتكار"],
+            "equipment": ["projector"], "time_type": "flexible", "preferred_dates": ["2026-10-19"],
+            "preferred_slots": ["09:00-12:00", "12:00-15:00"]}
+    body.update(extra)
+    return body
+
+
+def test_owner_request_waits_outside_the_schedule(client):
+    r = client.post("/api/requests", json=request_body()).json()
+    s = r["state"]
+    rid = r["request_id"]
+    assert rid not in {p["id"] for p in s["programs"]} and s["summary"]["total"] == 18
+    req = next(x for x in s["requests"] if x["id"] == rid)
+    assert req["status"] == "pending" and req["owner"] == "أكاديمية التقنية"
+    assert req["preview"]["ok"] and req["preview"]["placement"]["date"] == "2026-10-19"
+    assert req["program"]["fields"] == ["تقنية", "ابتكار"] and req["program"]["preferred_slots"] == ["09:00-12:00", "12:00-15:00"]
+
+
+def test_owner_request_needs_every_required_field(client):
+    res = client.post("/api/requests", json=request_body(category="", description=" ", audience=[], field=[]))
+    assert res.status_code == 422
+    msg = res.json()["detail"]["message"]
+    for name in ("التصنيف", "الوصف", "الجمهور المستهدف", "مجال الفعالية"):
+        assert name in msg
+    res = client.post("/api/requests", json=request_body(time_type="fixed", fixed_date="2026-10-19"))
+    assert res.status_code == 422 and "تاريخ الفعالية ووقتها وقاعتها" in res.json()["detail"]["message"]
+
+
+def test_accepting_a_request_schedules_it_and_tells_the_owner(client):
+    rid = client.post("/api/requests", json=request_body()).json()["request_id"]
+    s = client.post(f"/api/requests/{rid}/accept").json()["state"]
+    p = next(p for p in s["programs"] if p["id"] == rid)
+    assert p["owner"] == "أكاديمية التقنية" and p["category"] == "ورشة عمل" and p["description"]
+    assert rid in {x["program_id"] for x in s["schedule"]}
+    assert next(c for c in s["changes"] if c["program_id"] == rid)["type"] == "new"
+    note = s["notifications"][-1]
+    assert note["owner"] == "أكاديمية التقنية" and note["title"] == "قُبل طلبك"
+    assert client.post(f"/api/requests/{rid}/accept").status_code == 404  # decided once
+
+
+def test_rejecting_a_request_sends_the_reason(client):
+    rid = client.post("/api/requests", json=request_body()).json()["request_id"]
+    s = client.post(f"/api/requests/{rid}/reject", json={"note": "خارج نطاق المعرض"}).json()["state"]
+    req = next(x for x in s["requests"] if x["id"] == rid)
+    assert req["status"] == "rejected" and req["note"] == "خارج نطاق المعرض"
+    assert rid not in {p["id"] for p in s["programs"]}
+    assert "خارج نطاق المعرض" in s["notifications"][-1]["text"]
+
+
+def test_owner_can_withdraw_a_pending_request(client):
+    rid = client.post("/api/requests", json=request_body()).json()["request_id"]
+    s = client.delete(f"/api/requests/{rid}").json()["state"]
+    assert rid not in {x["id"] for x in s["requests"]}
+    second = client.post("/api/requests", json=request_body()).json()["request_id"]
+    assert second not in {p["id"] for p in client.get("/api/state").json()["programs"]}
+
+
+def test_fixed_request_on_a_taken_slot_is_refused(client):
+    res = client.post("/api/requests", json=request_body(
+        time_type="fixed", fixed_date="2026-10-19", fixed_start="16:00", fixed_venue="V01", attendance=100))
+    assert res.status_code == 422  # the closing ceremony is fixed there
