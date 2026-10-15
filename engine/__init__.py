@@ -1,4 +1,4 @@
-"""EXPOWISE scheduling engine.
+"""Plantix scheduling engine.
 
     from engine import generate_schedule
     result = generate_schedule(programs, venues, approved,
