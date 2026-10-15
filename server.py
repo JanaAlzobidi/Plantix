@@ -47,6 +47,11 @@ ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
 RUNTIME_MARKER = ".plantix-runtime"
 HISTORY_FILE = "attendance_history.csv"
+# choices offered in the add-event forms; the model adds any value it learned from the history
+CATEGORIES = ["ورشة عمل", "محاضرة", "جلسة حوارية", "ندوة", "عرض", "معرض", "لقاء", "مؤتمر صحفي", "حفل", "مسابقة"]
+DOMAINS = ["تقنية", "ريادة أعمال", "ابتكار", "تصميم", "إعلام", "مراسم", "تعليم", "استدامة", "صحة", "ثقافة وفنون"]
+AUDIENCES = ["طلاب", "مهنيون", "رواد أعمال", "مستثمرون", "الجمهور العام", "إعلاميون", "جهات حكومية", "أطفال وعائلات"]
+TIME_SLOTS = ["09:00-12:00", "12:00-15:00", "15:00-18:00"]
 ALERT_MIN_INCREASE = 0.15  # alerts start at a predicted 15% over the owner's estimate
 
 DAY_NAMES = ["الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت", "الأحد"]
@@ -76,13 +81,27 @@ class ProgramIn(BaseModel):
     time_type: str = "flexible"
     admission: str = ADMISSION_OPEN
     preferred_dates: list[str] = []
-    preferred_slot: str = ""
+    preferred_slot: str = ""          # one slot (older pages); merged with preferred_slots
+    preferred_slots: list[str] = []
     fixed_date: str | None = None
     fixed_start: str | None = None
     fixed_venue: str | None = None
     owner: str | None = None  # the requesting party; None keeps the current owner
-    field: str | None = None     # المجال; None keeps the current value
-    audience: str | None = None  # الفئة المستهدفة; None keeps the current value
+    # None keeps the current value on an edit. field and audience may hold several values.
+    field: list[str] | str | None = None     # مجال الفعالية
+    audience: list[str] | str | None = None  # الجمهور المستهدف
+    category: str | None = None              # التصنيف: ورشة عمل، جلسة حوارية…
+    description: str | None = None           # الوصف
+
+    def slots(self) -> list[str]:
+        out = [x for x in self.preferred_slots if x]
+        if self.preferred_slot and self.preferred_slot not in out:
+            out.insert(0, self.preferred_slot)
+        return out
+
+
+class DecisionIn(BaseModel):
+    note: str = ""
 
 
 class ReportIn(BaseModel):
@@ -169,6 +188,30 @@ def _change_words(pct: int | None, prefix: str = "") -> str:
     return f"{prefix}{'زيادة' if pct > 0 else 'انخفاض'} {abs(pct)}٪"
 
 
+def _missing_fields(p) -> list[str]:
+    """Required fields of an owner request (marked * in the form)."""
+    out = []
+    if not p.name.strip():
+        out.append("اسم الفعالية")
+    if not (p.owner or "").strip():
+        out.append("الجهة المنظِّمة")
+    if not (p.category or "").strip():
+        out.append("التصنيف")
+    if p.duration < 15:
+        out.append("المدة")
+    if p.attendance < 1:
+        out.append("عدد الحضور")
+    if not (p.description or "").strip():
+        out.append("الوصف")
+    if not attendance_model.values(p.audience or []):
+        out.append("الجمهور المستهدف")
+    if not attendance_model.values(p.field or []):
+        out.append("مجال الفعالية")
+    if p.time_type == "fixed" and not (p.fixed_date and p.fixed_start and p.fixed_venue):
+        out.append("تاريخ الفعالية ووقتها وقاعتها")
+    return out
+
+
 def _ratio(value: str) -> tuple[int, int]:
     met, total = (value or "0/0").split("/")
     return int(met), int(total)
@@ -207,7 +250,7 @@ class Workspace:
             self.programs, self.venues, self.approved = load_inputs(self.paths)
             if "admission" not in self.programs.columns:
                 self.programs["admission"] = ADMISSION_OPEN
-            for column in ("owner", "field", "audience"):
+            for column in ("owner", "category", "field", "audience", "description"):
                 if column not in self.programs.columns:
                     self.programs[column] = ""
             self.config = EngineConfig()
@@ -216,6 +259,9 @@ class Workspace:
             self.owner_of: dict[str, str] = dict(zip(self.programs["program_id"], self.programs["owner"]))
             self.reports: list[dict] = []
             self.notifications: list[dict] = []
+            self.requests: list[dict] = []   # owner requests waiting for the organizer
+            self.version = 0                 # bumps on every recompute; keys the request previews
+            self.previews: dict[str, tuple[int, dict]] = {}
             self.alert_decisions: dict[str, dict] = {}   # pid -> {"status", "attendance"}
             self.forecast_applied: dict[str, dict] = {}  # pid -> {"from", "to", "forecast"}
             self.refresh()
@@ -243,6 +289,7 @@ class Workspace:
         self.venues.to_csv(self.paths.venues, index=False, encoding="utf-8-sig")
         self.result = self.run(self.programs, self.venues, self.config)
         save_proposal(self.result, self.paths)
+        self.version = getattr(self, "version", 0) + 1
 
     # ---- serialization
 
@@ -285,7 +332,9 @@ class Workspace:
                           "venue_id": text(r["fixed_venue_id"])} if fixed else None,
                 "locked": pid in self.lock_slots,
                 "owner": text(r.get("owner", "")),
-                "field": text(r.get("field", "")), "audience": text(r.get("audience", "")),
+                "fields": attendance_model.values(r.get("field", "")),
+                "audiences": attendance_model.values(r.get("audience", "")),
+                "category": text(r.get("category", "")), "description": text(r.get("description", "")),
                 "forecast": self.forecast_json(r),
             })
         return out
@@ -308,7 +357,7 @@ class Workspace:
         return {"increase_pct": round(100 * f.increase), "predicted": f.predicted, "expected": attendance,
                 "parts": f.parts, "evidence": {"events": ev["events"], "above": ev["above"],
                                                "mean_pct": None if ev["mean_increase"] is None else round(100 * ev["mean_increase"])},
-                "combo": f"{text(record.get('field'))} × {text(record.get('audience'))}",
+                "combo": f.combo,
                 "applied": False, "original": None}
 
     def alerts_json(self, programs_json, venues_json, schedule_json) -> list[dict]:
@@ -363,6 +412,93 @@ class Workspace:
             "min_increase_pct": round(100 * ALERT_MIN_INCREASE),
             "alerts": self.alerts_json(world["programs"], world["venues"], world["schedule"]),
         }
+
+    # ---- owner requests: wait for the organizer before they enter the schedule
+
+    def submit_request(self, p: ProgramIn) -> dict:
+        with self.lock:
+            missing = _missing_fields(p)
+            if missing:
+                raise HTTPException(422, {"message": "أكمل الحقول الإلزامية: " + "، ".join(missing) + ".",
+                                          "errors": ["حقل إلزامي: " + m for m in missing]})
+            pid = self.next_id()
+            check = self.check(pid, p)
+            if not check["ok"]:
+                raise HTTPException(422, {"message": "لم يُرسل الطلب: فيه مشكلة.", "errors": check["errors"]})
+            req = {"id": pid, "status": "pending", "owner": p.owner.strip(), "name": p.name.strip(),
+                   "time": datetime.now().strftime("%H:%M"), "note": "", "body": p.model_dump()}
+            self.requests.append(req)
+            return req
+
+    def find_request(self, rid: str, status: str | None = "pending") -> dict:
+        for r in self.requests:
+            if r["id"] == rid and (status is None or r["status"] == status):
+                return r
+        raise HTTPException(404, "لا يوجد طلب بانتظار القرار بهذا الرقم.")
+
+    def preview_request(self, req) -> dict:
+        cached = self.previews.get(req["id"])
+        if cached and cached[0] == self.version:
+            return cached[1]
+        check = self.check(req["id"], ProgramIn(**req["body"]))
+        self.previews[req["id"]] = (self.version, check)
+        return check
+
+    def requests_json(self) -> list[dict]:
+        out = []
+        for req in self.requests:
+            item = {k: v for k, v in req.items() if k != "body"}
+            row = self.with_program(req["id"], ProgramIn(**req["body"]))
+            item["program"] = self.programs_json(row.loc[row["program_id"] == req["id"]])[0]
+            if req["status"] == "pending":
+                item["preview"] = self.preview_request(req)
+            out.append(item)
+        return out
+
+    def accept_request(self, rid: str) -> dict:
+        with self.lock:
+            req = self.find_request(rid)
+            p = ProgramIn(**req["body"])
+            df = self.with_program(rid, p)
+            result = self.run(df, self.venues, self.config)
+            if result.status == "INVALID_DATA":
+                raise HTTPException(409, {"message": "لا يمكن قبوله الآن: تعارض مع الجدول الحالي.", "errors": _errors(result)})
+            self.programs = df
+            self.owner_of[rid] = req["owner"]
+            req["status"] = "accepted"
+            req["decided_time"] = datetime.now().strftime("%H:%M")
+            self.notifications.append({"to": "owner", "owner": req["owner"], "time": req["decided_time"],
+                                       "title": "قُبل طلبك", "program_id": rid,
+                                       "text": f"قبل فريق البرامج «{req['name']}» وأدخلها في الجدولة، وسيصلك موعدها عند اعتماد الجدول."})
+            self.refresh()
+            return req
+
+    def reject_request(self, rid: str, note: str) -> dict:
+        with self.lock:
+            req = self.find_request(rid)
+            req["status"] = "rejected"
+            req["note"] = " ".join(note.split())
+            req["decided_time"] = datetime.now().strftime("%H:%M")
+            self.notifications.append({"to": "owner", "owner": req["owner"], "time": req["decided_time"],
+                                       "title": "اعتذر فريق البرامج عن طلبك", "program_id": rid,
+                                       "text": f"اعتذر فريق البرامج عن «{req['name']}»" + (f": {req['note']}" if req["note"] else ".")})
+            return req
+
+    def withdraw_request(self, rid: str):
+        with self.lock:
+            req = self.find_request(rid)
+            self.requests.remove(req)
+            self.previews.pop(rid, None)
+
+    def options_json(self) -> dict:
+        def merge(base, learned):
+            return base + [x for x in sorted(learned) if x not in base]
+        return {"categories": merge(CATEGORIES, set(self.programs["category"]) - {""}),
+                "domains": merge(DOMAINS, self.model.fields if self.model else []),
+                "audiences": merge(AUDIENCES, self.model.audiences if self.model else []),
+                "learned_domains": self.model.fields if self.model else [],
+                "learned_audiences": self.model.audiences if self.model else [],
+                "time_slots": TIME_SLOTS}
 
     def find_alert(self, pid: str) -> dict:
         world = self.world_json(self.result, self.programs, self.venues, self.config)
@@ -530,10 +666,11 @@ class Workspace:
             owners = sorted({o for o in self.programs["owner"] if text(o)})
             world.update({
                 "reference_date": self.reference_date, "freeze_days": self.freeze_days,
-                "owners": owners, "reports": self.reports, "notifications": self.notifications,
+                "owners": owners, "reports": self.reports, "requests": self.requests_json(), "notifications": self.notifications,
                 "notified": sorted(self.notified),
                 "approved": approved, "changes": self.changes_json(self.result),
                 "forecast": self.forecast_state(world),
+                "options": self.options_json(),
                 "equipment": [{"id": e, "label": EQUIPMENT_AR.get(e, e)} for e in catalog],
                 "warnings": self.result.issues.loc[self.result.issues["severity"] == "warning", "message"].tolist()
                 if not self.result.issues.empty else [],
@@ -543,7 +680,7 @@ class Workspace:
     # ---- program edits
 
     def next_id(self) -> str:
-        ids = set(self.programs["program_id"])
+        ids = set(self.programs["program_id"]) | {r["id"] for r in getattr(self, "requests", [])}
         if self.approved is not None:
             ids |= set(self.approved["program_id"])
         top = max([parse_int(i[1:]) or 0 for i in ids if i[:1].upper() == "P"] + [0])
@@ -559,14 +696,18 @@ class Workspace:
             "fixed_start_time": (p.fixed_start or "") if fixed else "",
             "fixed_venue_id": (p.fixed_venue or "") if fixed else "",
             "preferred_dates": "" if fixed else ";".join(p.preferred_dates),
-            "preferred_time_slots": "" if fixed else (p.preferred_slot or ""),
+            "preferred_time_slots": "" if fixed else ";".join(p.slots()),
             "admission": p.admission or ADMISSION_OPEN,
             "owner": (p.owner.strip() if p.owner is not None else self.owner_of.get(pid, "")),
         }
-        if p.field is not None:
-            row["field"] = p.field.strip()
-        if p.audience is not None:
-            row["audience"] = p.audience.strip()
+        for key in ("field", "audience"):
+            value = getattr(p, key)
+            if value is not None:
+                row[key] = ";".join(attendance_model.values(value))
+        for key in ("category", "description"):
+            value = getattr(p, key)
+            if value is not None:
+                row[key] = " ".join(value.split())
         df = self.programs.copy()
         for column in row:
             if column not in df.columns:
@@ -1005,6 +1146,26 @@ def create_app(data_dir=ROOT / "data", runtime_dir=ROOT / "runtime",
     def resolve_report(rid: str):
         report = ws.resolve_report(rid)
         return {"report": report, "state": ws.state()}
+
+    @app.post("/api/requests")
+    def submit_request(body: ProgramIn):
+        req = ws.submit_request(body)
+        return {"ok": True, "request_id": req["id"], "state": ws.state()}
+
+    @app.delete("/api/requests/{rid}")
+    def withdraw_request(rid: str):
+        ws.withdraw_request(rid)
+        return {"ok": True, "state": ws.state()}
+
+    @app.post("/api/requests/{rid}/accept")
+    def accept_request(rid: str):
+        ws.accept_request(rid)
+        return {"ok": True, "program_id": rid, "state": ws.state()}
+
+    @app.post("/api/requests/{rid}/reject")
+    def reject_request(rid: str, body: DecisionIn):
+        ws.reject_request(rid, body.note)
+        return {"ok": True, "state": ws.state()}
 
     @app.post("/api/alerts/{pid}/accept")
     def accept_alert(pid: str):
