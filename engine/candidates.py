@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
-from .config import EngineConfig, in_freeze_window
+from .config import STATUS_LABELS_AR, EngineConfig, in_freeze_window
 from .data import Inputs, Program, Venue, fmt_minutes, format_items
 
 
@@ -99,7 +99,7 @@ def _diagnose_no_venue(program: Program, venues: dict[str, Venue]) -> Diagnosis:
             (closest.venue_id, roomiest_equipped.venue_id),
         )
 
-    statuses = "، ".join(f"{_venue_label(v)}: {v.status}" for v in both)
+    statuses = "، ".join(f"{_venue_label(v)}: {STATUS_LABELS_AR.get(v.status, v.status)}" for v in both)
     return Diagnosis(
         "VENUE_UNAVAILABLE",
         f"القاعات المناسبة لهذه الفعالية غير متاحة حاليًا ({statuses}).",
@@ -206,10 +206,10 @@ def build_candidates(inputs: Inputs, config: EngineConfig):
             )
         else:
             names = "، ".join(f"{fid} ({programs[fid].name})" for fid in sorted(blocking_fixed))
+            where = f"القاعات المناسبة ({', '.join(v.name for v in rooms)})"
             diagnoses[pid] = Diagnosis(
                 "BLOCKED_BY_FIXED",
-                f"كل الأوقات في القاعات المناسبة ({', '.join(v.name for v in rooms)}) "
-                f"تشغلها فعاليات ثابتة: {names}.",
+                f"كل الأوقات الممكنة تتعارض مع فعاليات ثابتة في {where}: {names}.",
                 "أضف قاعة مناسبة أخرى، أو قصّر مدة الفعالية، أو راجع مواعيد الفعاليات الثابتة.",
                 tuple(sorted(blocking_fixed)),
             )
