@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ar" dir="rtl" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plantix — مشرف القاعات</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Readex+Pro:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="/static/styles.css">
+<script>try { document.documentElement.dataset.theme = localStorage.getItem('plantix-theme') || 'light'; } catch (e) {}</script>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 6h9"/><path d="M10 12h9"/><path d="M5 18h6"/></svg></span>
+      <span class="brand-name">Plantix</span>
+    </div>
+    <div class="top-end">
+      <nav class="roles" aria-label="الدور">
+        <a class="role" href="/owner">صاحب الفعالية</a>
+        <a class="role" href="/">منظم البرامج</a>
+        <a class="role" href="/venue" aria-current="page">مشرف القاعات</a>
+      </nav>
+      <button type="button" class="btn btn-secondary" id="theme-btn" data-act="theme"></button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="aside" aria-label="بلاغ عن مشكلة">
+      <section class="card stack" id="report-form"><div class="loading">يحمّل…</div></section>
+      <section class="card stack fill">
+        <div class="card-head"><h2>الإشعارات</h2><span class="chip" id="notif-count">0</span></div>
+        <div class="notif-list" id="notifs"></div>
+      </section>
+    </aside>
+    <main class="main">
+      <section class="kpis" id="kpis" aria-label="ملخص"></section>
+      <section class="card stack" aria-label="حالة القاعات">
+        <div class="card-head"><h2>حالة القاعات</h2><span class="muted" style="margin-inline-start:auto;font-size:12.5px">أي عطل تبلّغ عنه يصل لفريق البرامج فورًا، ومعه خطة بديلة جاهزة.</span></div>
+        <div class="venue-grid" id="venues"></div>
+      </section>
+      <section class="card schedule" aria-label="بلاغاتي">
+        <div class="card-head"><h2>بلاغاتي</h2><span class="chip" id="report-count">0</span></div>
+        <div class="req-list" id="reports"></div>
+      </section>
+    </main>
+  </div>
+  <div id="overlay"></div>
+  <div id="feedback" aria-live="polite"></div>
+</div>
+<script src="/static/shared.js"></script>
+<script src="/static/venue.js"></script>
+</body>
+</html>

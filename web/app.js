@@ -6,7 +6,7 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const h = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const toMin = (t) => { const [a, b] = String(t).split(':').map(Number); return a * 60 + (b || 0); };
 const fmt = (m) => String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
-const plural = (n, one, few, many) => (n === 1 ? `${one} واحد` : n === 2 ? `2 ${few}` : n >= 3 && n <= 10 ? `${n} ${few}` : `${n} ${many}`);
+const plural = (n, one, few, many, two) => (n === 1 ? (one.endsWith('ة') ? `${one} واحدة` : `${one} واحد`) : n === 2 ? (two || `2 ${few}`) : n >= 3 && n <= 10 ? `${n} ${few}` : `${n} ${many}`);
 const secs = (s) => (s == null ? '' : ` · أُعيدت الجدولة في ${Number(s).toFixed(2)} ث`);
 
 const svg = (body, size = 16, extra = '') => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" ${extra}>${body}</svg>`;
@@ -124,7 +124,7 @@ function renderHeader() {
   const dark = U.theme === 'dark';
   $('#theme-btn').innerHTML = `${dark ? ICON.sun() : ICON.moon()}<span>${dark ? 'صباحي' : 'ليلي'}</span>`;
   $('#theme-btn').setAttribute('aria-label', dark ? 'التبديل إلى النمط الصباحي' : 'التبديل إلى النمط الليلي');
-  const n = S.data ? S.data.unscheduled.length : 0;
+  const n = S.data ? S.data.unscheduled.length + S.data.reports.filter((r) => r.status === 'open').length : 0;
   $('#bell').innerHTML = ICON.bell() + (n ? `<span class="badge">${n}</span>` : '');
 }
 function searchResults() {
@@ -176,7 +176,7 @@ function asideHTML() {
   const approval = ch.length
     ? `<section class="card approval pending stack" aria-label="الاعتماد" style="gap:9px">
         <div class="card-head"><h2>مقترح غير معتمد</h2><span class="chip chip-amber">مسودة</span></div>
-        <div style="font-size:13px;color:var(--ink-2)">${plural(ch.length, 'تغيير', 'تغييرات', 'تغييرًا')} بانتظار مراجعتك · ${frozen ? frozen + ' داخل يوم مجمّد' : 'لا شيء داخل اليوم المجمّد'}</div>
+        <div style="font-size:13px;color:var(--ink-2)">${plural(ch.length, 'تغيير', 'تغييرات', 'تغييرًا', 'تغييران')} بانتظار مراجعتك · ${frozen ? frozen + ' داخل يوم مجمّد' : 'لا شيء داخل اليوم المجمّد'}</div>
         <div class="chips">${chips}</div>
         <div class="muted" style="font-size:12px">الجدول المعتمد لا يتغير قبل اعتمادك، والإشعارات تُرسل بعده.</div>
         <button type="button" class="btn btn-primary btn-lg" data-act="review" ${d.summary.can_approve ? '' : 'disabled'}>مراجعة واعتماد</button>
@@ -184,9 +184,17 @@ function asideHTML() {
     : `<section class="card approval" aria-label="الاعتماد"><div class="approved-ok"><span class="dot">${svg('<path d="M5 12.5l4.5 4.5L19 7.5"/>', 18)}</span>
         <div><div style="font-weight:700">الجدول معتمد</div><div class="muted" style="font-size:12.5px">لا تغييرات بانتظار الاعتماد</div></div></div></section>`;
 
+  const reports = d.reports.filter((r) => r.status === 'open').map((r) => `<div class="inbox-item">
+      <div style="display:flex;align-items:center;gap:6px"><span class="chip chip-amber">بلاغ من مشرف القاعات</span><span class="muted" style="font-size:11.5px">${h(r.time)}</span></div>
+      <div class="name">${h(r.title)}</div>
+      <div class="reason">${r.errors.length ? h('يحتاج قرارك: ' + r.errors[0]) : r.affected.length ? h(`جهّز المحرك خطة بديلة: تتأثر ${plural(r.affected.length, 'فعالية', 'فعاليات', 'فعالية', 'فعاليتان')} (${r.affected.join('، ')})`) : 'لا تتأثر أي فعالية.'}</div>
+      ${r.note ? `<div class="fix">${h(r.note)}</div>` : ''}
+      <div class="row-actions"><button type="button" class="btn btn-primary btn-sm" data-act="review" ${d.summary.can_approve ? '' : 'disabled'}>راجع الخطة واعتمد</button></div>
+    </div>`).join('');
+  const pendingCount = d.unscheduled.length + d.reports.filter((r) => r.status === 'open').length;
   return `<section class="card stack">
-      <div class="card-head"><h2>يحتاج قرارك</h2><span class="count">${d.unscheduled.length}</span></div>
-      ${inbox || '<div class="all-good">كل الفعاليات مجدولة. لا شيء ينتظرك.</div>'}
+      <div class="card-head"><h2>يحتاج قرارك</h2><span class="count">${pendingCount}</span></div>
+      ${reports + inbox || '<div class="all-good">كل الفعاليات مجدولة. لا شيء ينتظرك.</div>'}
     </section>${approval}`;
 }
 
@@ -589,11 +597,11 @@ function reviewHTML() {
     const freezeTag = c.in_freeze && ['moved', 'dropped', 'removed'].includes(c.type) ? '<span class="chip chip-amber">يوم مجمّد</span>' : '';
     return `<div class="review-item"><div class="review-line"><span class="chip ${TYPE_CHIP[c.type]}">${TYPE_LABEL[c.type]}</span><b>${h(c.name)}</b>
         ${before ? `<span class="strike">${h(before)}</span><span class="muted">←</span>` : ''}<span style="font-weight:600">${h(after)}</span>${freezeTag}</div>
-      <div class="notice">${ICON.message()}<div><div class="muted" style="font-size:12px">معاينة الإشعار إلى صاحب الفعالية${p || c.type === 'removed' ? '' : ''}</div><div>${h(msg)}</div></div></div></div>`;
+      <div class="notice">${ICON.message()}<div><div class="muted" style="font-size:12px">معاينة الإشعار إلى ${h(c.owner || 'صاحب الفعالية')}</div><div>${h(c.message || msg)}</div></div></div></div>`;
   }).join('');
   return `<div class="backdrop" data-backdrop><section class="dialog" role="dialog" aria-modal="true" aria-label="مراجعة واعتماد" style="width:880px;gap:12px">
     <div class="head-row" style="align-items:center"><div><h2>مراجعة المقترح قبل الاعتماد</h2>
-      <div class="muted" style="font-size:13px">${plural(ch.length, 'تغيير', 'تغييرات', 'تغييرًا')} · ${frozen ? frozen + ' داخل يوم مجمّد · ' : ''}سيُرسل ${plural(ch.length, 'إشعار', 'إشعارات', 'إشعارًا')}</div></div>
+      <div class="muted" style="font-size:13px">${plural(ch.length, 'تغيير', 'تغييرات', 'تغييرًا', 'تغييران')} · ${frozen ? frozen + ' داخل يوم مجمّد · ' : ''}سيُرسل ${plural(ch.length, 'إشعار', 'إشعارات', 'إشعارًا', 'إشعاران')}</div></div>
       <button type="button" class="close-x" data-act="close" aria-label="إغلاق" data-autofocus>${ICON.close()}</button></div>
     <div class="review-list">${items || '<div class="empty">لا تغييرات.</div>'}</div>
     <div class="form-actions" style="border-top:1px solid var(--line);padding-top:12px">
@@ -639,7 +647,6 @@ const ACT = {
     try { localStorage.setItem('plantix-theme', U.theme); } catch (e) { /* storage unavailable */ }
     renderHeader();
   },
-  role(ds) { toast(`واجهة «${ds.role}» في الخطوة التالية`); },
   bell() { if (S.data.unscheduled.length) { U.unschedOpen = !U.unschedOpen; render(); } else toast('لا إشعارات جديدة'); },
   searchPick(ds) {
     const slot = index(S.data).s[ds.id];
@@ -672,7 +679,7 @@ const ACT = {
   async approve() {
     U.panel = null;
     await mutate('يعتمد ويرسل الإشعارات…', () => api('POST', '/api/approve'),
-      (r) => (r.sent ? `اعتُمد الجدول وأُرسل ${plural(r.sent, 'إشعار', 'إشعارات', 'إشعارًا')}` : 'اعتُمد الجدول'));
+      (r) => (r.sent ? `اعتُمد الجدول وأُرسل ${plural(r.sent, 'إشعار', 'إشعارات', 'إشعارًا', 'إشعاران')}` : 'اعتُمد الجدول'));
   },
   async save() {
     if (clientErrors().length) return;

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ar" dir="rtl" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plantix — صاحب الفعالية</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Readex+Pro:wght@500;600;700&display=swap">
+<link rel="stylesheet" href="/static/styles.css">
+<script>try { document.documentElement.dataset.theme = localStorage.getItem('plantix-theme') || 'light'; } catch (e) {}</script>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 6h9"/><path d="M10 12h9"/><path d="M5 18h6"/></svg></span>
+      <span class="brand-name">Plantix</span>
+    </div>
+    <div class="top-end">
+      <nav class="roles" aria-label="الدور">
+        <a class="role" href="/owner" aria-current="page">صاحب الفعالية</a>
+        <a class="role" href="/">منظم البرامج</a>
+        <a class="role" href="/venue">مشرف القاعات</a>
+      </nav>
+      <button type="button" class="btn btn-secondary" id="theme-btn" data-act="theme"></button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="aside" aria-label="الإشعارات">
+      <section class="card stack fill">
+        <div class="card-head"><h2>الإشعارات</h2><span class="chip" id="notif-count">0</span></div>
+        <div class="notif-list" id="notifs"></div>
+      </section>
+    </aside>
+    <main class="main">
+      <section class="card org-bar" aria-label="الجهة">
+        <div style="display:flex;flex-direction:column;gap:2px">
+          <h2 style="font-size:19px">طلباتي</h2>
+          <span class="muted" style="font-size:12.5px">تابِع حالة فعالياتك، وارفع طلبًا جديدًا في دقيقة.</span>
+        </div>
+        <label class="org-select">الجهة
+          <select id="org"></select>
+        </label>
+        <button type="button" class="btn btn-primary btn-lg" data-act="new"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>طلب فعالية جديدة</button>
+      </section>
+      <section class="kpis" id="kpis" aria-label="ملخص"></section>
+      <section class="card schedule" aria-label="قائمة الطلبات">
+        <div class="sched-head">
+          <div class="seg" role="group" aria-label="تصفية" id="filters"></div>
+        </div>
+        <div class="req-list" id="list"><div class="loading">يحمّل طلباتك…</div></div>
+      </section>
+    </main>
+  </div>
+  <div id="overlay"></div>
+  <div id="feedback" aria-live="polite"></div>
+</div>
+<script src="/static/shared.js"></script>
+<script src="/static/owner.js"></script>
+</body>
+</html>
