@@ -10,10 +10,13 @@ What it learns from
     expected_attendance, actual_attendance
 
 Features
-    field (المجال), audience (الفئة المستهدفة), and their combination, all
-    one-hot encoded. The combination column is what lets the model learn
-    "entrepreneurship for students overflows" even when neither entrepreneurship
-    nor students does on its own.
+    field (المجال), audience (الفئة المستهدفة), and their combination. An event
+    may have several domains or audiences ("تقنية;ابتكار"), so each group is
+    multi-hot encoded and averaged: one domain gets weight 1, two domains get
+    1/2 each. A one-domain, one-audience event is plain one-hot encoding. The
+    combination columns (every domain × audience pair) are what let the model
+    learn "entrepreneurship for students overflows" even when neither
+    entrepreneurship nor students does on its own.
 
 Model
     scikit-learn Ridge: ordinary least squares with a small L2 penalty, so a
@@ -42,14 +45,13 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, r2_score
-from sklearn.preprocessing import OneHotEncoder
 
 from .config import ADMISSION_ALIASES, ADMISSION_OPEN
-from .data import is_blank, normalize_item, parse_int, text
+from .data import is_blank, normalize_item, parse_int, split_list, text
 
 HISTORY_COLUMNS = ("edition", "field", "audience", "expected_attendance", "actual_attendance")
-FEATURES = ("field", "audience", "combo")
 ALPHA = 1.0
+PART_LABELS = {"field": "المجال", "audience": "الفئة المستهدفة", "combo": "المزيج بينهما"}
 
 
 def admission_of(record) -> str:
@@ -60,17 +62,59 @@ def admission_of(record) -> str:
     return ADMISSION_ALIASES.get(normalize_item(text(value)), ADMISSION_OPEN)
 
 
-def _combo(field: str, audience: str) -> str:
-    return f"{field} × {audience}"
+def values(cell) -> list[str]:
+    """'تقنية;ابتكار' -> ['تقنية', 'ابتكار'], keeping order and dropping repeats."""
+    if isinstance(cell, (list, tuple)):
+        items = [text(x) for x in cell]
+    else:
+        items = split_list(cell) if not is_blank(cell) else []
+    out = []
+    for item in items:
+        if item and item not in out:
+            out.append(item)
+    return out
 
 
-def _frame(fields, audiences) -> pd.DataFrame:
-    fields, audiences = list(fields), list(audiences)
-    return pd.DataFrame({"field": fields, "audience": audiences,
-                         "combo": [_combo(f, a) for f, a in zip(fields, audiences)]})
+def label(fields, audiences) -> str:
+    return f"{'، '.join(fields)} × {'، '.join(audiences)}"
 
 
-def training_rows(history: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+class Encoder:
+    """Averaged multi-hot encoding of domains, audiences and their pairs."""
+
+    def __init__(self, rows):
+        self.vocab = {"field": [], "audience": [], "combo": []}
+        for fields, audiences in rows:
+            for key, items in (("field", fields), ("audience", audiences),
+                               ("combo", [(f, a) for f in fields for a in audiences])):
+                for item in items:
+                    if item not in self.vocab[key]:
+                        self.vocab[key].append(item)
+        self.offset, n = {}, 0
+        for key in ("field", "audience", "combo"):
+            self.offset[key] = n
+            n += len(self.vocab[key])
+        self.index = {key: {v: i for i, v in enumerate(self.vocab[key])} for key in self.vocab}
+        self.width = n
+
+    def known(self, fields, audiences):
+        return ([f for f in fields if f in self.index["field"]],
+                [a for a in audiences if a in self.index["audience"]])
+
+    def row(self, fields, audiences) -> np.ndarray:
+        x = np.zeros(self.width)
+        pairs = [(f, a) for f in fields for a in audiences]
+        for key, items in (("field", fields), ("audience", audiences), ("combo", pairs)):
+            hits = [self.index[key][i] for i in items if i in self.index[key]]
+            for h in hits:
+                x[self.offset[key] + h] += 1 / len(items)
+        return x
+
+    def matrix(self, rows) -> np.ndarray:
+        return np.array([self.row(f, a) for f, a in rows]) if rows else np.zeros((0, self.width))
+
+
+def training_rows(history: pd.DataFrame) -> tuple[list[dict], int]:
     """Open events with usable numbers, and how many registration rows were left out."""
     missing = [c for c in HISTORY_COLUMNS if c not in history.columns]
     if missing:
@@ -81,18 +125,18 @@ def training_rows(history: pd.DataFrame) -> tuple[pd.DataFrame, int]:
             excluded += 1
             continue
         expected, actual = parse_int(r["expected_attendance"]), parse_int(r["actual_attendance"])
-        f, a = text(r["field"]), text(r["audience"])
-        if not expected or expected <= 0 or actual is None or actual < 0 or not f or not a:
+        fields, audiences = values(r["field"]), values(r["audience"])
+        if not expected or expected <= 0 or actual is None or actual < 0 or not fields or not audiences:
             continue
-        rows.append({"edition": text(r["edition"]), "field": f, "audience": a,
+        rows.append({"edition": text(r["edition"]), "fields": fields, "audiences": audiences,
                      "expected": expected, "actual": actual, "increase": actual / expected - 1})
-    return pd.DataFrame(rows, columns=["edition", "field", "audience", "expected", "actual", "increase"]), excluded
+    return rows, excluded
 
 
-def _fit(rows: pd.DataFrame, alpha: float):
-    encoder = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
-    X = encoder.fit_transform(_frame(rows["field"], rows["audience"]))
-    model = Ridge(alpha=alpha).fit(X, rows["increase"].to_numpy())
+def _fit(rows: list[dict], alpha: float):
+    pairs = [(r["fields"], r["audiences"]) for r in rows]
+    encoder = Encoder(pairs)
+    model = Ridge(alpha=alpha).fit(encoder.matrix(pairs), np.array([r["increase"] for r in rows]))
     return encoder, model
 
 
@@ -101,51 +145,61 @@ class Forecast:
     increase: float          # 0.30 = 30% more than expected
     predicted: int           # expected * (1 + increase), rounded up
     parts: list[dict]        # [{"label", "points"}], sums to the increase in percentage points
-    evidence: dict           # past events with the same field and audience
+    evidence: dict           # past events sharing a domain × audience pair
+    combo: str               # readable "domains × audiences"
 
 
 @dataclass
 class AttendanceModel:
-    encoder: OneHotEncoder
+    encoder: Encoder
     regressor: Ridge
-    fields: list[str]
-    audiences: list[str]
-    combos: dict[str, dict]  # combo -> {"events", "mean_increase", "above"}
+    rows: list[dict]
     card: dict = dc_field(default_factory=dict)
 
-    def knows(self, field_: str, audience: str) -> bool:
-        return text(field_) in self.fields and text(audience) in self.audiences
+    @property
+    def fields(self) -> list[str]:
+        return sorted(self.encoder.vocab["field"])
 
-    def increase(self, field_: str, audience: str) -> float:
-        X = self.encoder.transform(_frame([text(field_)], [text(audience)]))
-        return float(self.regressor.predict(X)[0])
+    @property
+    def audiences(self) -> list[str]:
+        return sorted(self.encoder.vocab["audience"])
 
-    def explain(self, field_: str, audience: str) -> list[dict]:
-        """The prediction split into baseline + field + audience + combination, in points."""
-        X = self.encoder.transform(_frame([text(field_)], [text(audience)]))[0]
-        coef = self.regressor.coef_
-        labels = {"field": "المجال", "audience": "الفئة المستهدفة", "combo": "المزيج بينهما"}
+    def knows(self, fields, audiences) -> bool:
+        f, a = self.encoder.known(values(fields), values(audiences))
+        return bool(f) and bool(a)
+
+    def increase(self, fields, audiences) -> float:
+        f, a = self.encoder.known(values(fields), values(audiences))
+        return float(self.regressor.predict(self.encoder.row(f, a)[None, :])[0])
+
+    def explain(self, fields, audiences) -> list[dict]:
+        """The prediction split into baseline + domain + audience + combination, in points."""
+        f, a = self.encoder.known(values(fields), values(audiences))
+        x, coef = self.encoder.row(f, a), self.regressor.coef_
         parts = [{"label": "متوسط الدورات السابقة", "points": round(100 * float(self.regressor.intercept_), 1)}]
-        offset = 0
-        for name, cats in zip(FEATURES, self.encoder.categories_):
-            width = len(cats)
-            points = float(np.dot(coef[offset:offset + width], X[offset:offset + width]))
-            parts.append({"label": labels[name], "points": round(100 * points, 1)})
-            offset += width
+        for key in ("field", "audience", "combo"):
+            lo = self.encoder.offset[key]
+            hi = lo + len(self.encoder.vocab[key])
+            parts.append({"label": PART_LABELS[key], "points": round(100 * float(np.dot(coef[lo:hi], x[lo:hi])), 1)})
         return parts
 
+    def evidence(self, fields, audiences) -> dict:
+        pairs = {(f, a) for f in fields for a in audiences}
+        hits = [r for r in self.rows if pairs & {(f, a) for f in r["fields"] for a in r["audiences"]}]
+        return {"events": len(hits), "above": sum(r["actual"] > r["expected"] for r in hits),
+                "mean_increase": round(float(np.mean([r["increase"] for r in hits])), 3) if hits else None}
+
     def forecast(self, record) -> Forecast | None:
-        """None for registration events, unknown field/audience, or a missing estimate."""
+        """None for registration events, unknown domain/audience, or a missing estimate."""
         if admission_of(record) != ADMISSION_OPEN:
             return None
-        f, a = text(record.get("field", "")), text(record.get("audience", ""))
+        f, a = self.encoder.known(values(record.get("field", "")), values(record.get("audience", "")))
         expected = parse_int(record.get("attendance_value", record.get("expected_attendance")))
-        if not expected or not self.knows(f, a):
+        if not expected or not f or not a:
             return None
         inc = self.increase(f, a)
         return Forecast(increase=inc, predicted=math.ceil(expected * (1 + inc) - 1e-9),
-                        parts=self.explain(f, a),
-                        evidence=self.combos.get(_combo(f, a), {"events": 0, "mean_increase": None, "above": 0}))
+                        parts=self.explain(f, a), evidence=self.evidence(f, a), combo=label(f, a))
 
 
 def train(history: pd.DataFrame, alpha: float = ALPHA) -> AttendanceModel:
@@ -154,30 +208,25 @@ def train(history: pd.DataFrame, alpha: float = ALPHA) -> AttendanceModel:
         raise ValueError("attendance_history.csv: أقل من 5 فعاليات حضور عام صالحة للتدريب.")
 
     # honest score: hold out the latest edition
-    editions = sorted(rows["edition"].unique())
+    editions = sorted({r["edition"] for r in rows})
     test = None
     if len(editions) >= 2:
         held_out = editions[-1]
-        train_part, test_part = rows[rows["edition"] != held_out], rows[rows["edition"] == held_out]
+        train_part = [r for r in rows if r["edition"] != held_out]
+        test_part = [r for r in rows if r["edition"] == held_out]
         enc, reg = _fit(train_part, alpha)
-        pred = reg.predict(enc.transform(_frame(test_part["field"], test_part["audience"])))
-        truth = test_part["increase"].to_numpy()
-        test = {"edition": held_out, "events": int(len(test_part)),
+        pred = reg.predict(enc.matrix([(r["fields"], r["audiences"]) for r in test_part]))
+        truth = np.array([r["increase"] for r in test_part])
+        test = {"edition": held_out, "events": len(test_part),
                 "mae_points": round(100 * mean_absolute_error(truth, pred), 1),
                 "baseline_mae_points": round(100 * mean_absolute_error(truth, np.zeros_like(truth)), 1),
                 "r2": round(float(r2_score(truth, pred)), 2)}
 
     encoder, regressor = _fit(rows, alpha)
-    combos = {}
-    for (f, a), g in rows.groupby(["field", "audience"]):
-        combos[_combo(f, a)] = {"events": int(len(g)), "mean_increase": round(float(g["increase"].mean()), 3),
-                                "above": int((g["actual"] > g["expected"]).sum())}
     card = {"algorithm": "Linear Regression (Ridge)", "features": ["المجال", "الفئة المستهدفة", "المزيج بينهما"],
-            "trained_events": int(len(rows)), "excluded_registration": int(excluded),
+            "trained_events": len(rows), "excluded_registration": int(excluded),
             "editions": editions, "test": test}
-    return AttendanceModel(encoder=encoder, regressor=regressor,
-                           fields=sorted(rows["field"].unique()), audiences=sorted(rows["audience"].unique()),
-                           combos=combos, card=card)
+    return AttendanceModel(encoder=encoder, regressor=regressor, rows=rows, card=card)
 
 
 def load(path) -> AttendanceModel | None:
