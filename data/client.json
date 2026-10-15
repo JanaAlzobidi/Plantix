@@ -1,0 +1,11 @@
+{
+  "name": "ملتقى الرياض للابتكار 2026 — نسخة مصغّرة",
+  "start_date": "2026-10-17",
+  "end_date": "2026-10-20",
+  "day_start": "10:00",
+  "day_end": "20:00",
+  "slot_minutes": 15,
+  "freeze_window_days": 3,
+  "allow_setup_after_close": true,
+  "attendance_alerts": {"enabled": true, "min_history": 3}
+}

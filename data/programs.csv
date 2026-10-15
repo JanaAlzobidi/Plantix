@@ -1,19 +1,21 @@
-program_id,program_name,duration_min,attendance_value,venue_requirements,time_type,fixed_date,fixed_start_time,fixed_venue_id,preferred_dates,preferred_time_slots
-P01,حفل الافتتاح,90,450,projector;microphone;sound system;stage,fixed,2026-10-17,09:00,V01,,
-P02,الكلمة الرئيسية,60,400,projector;microphone;sound system,fixed,2026-10-17,11:00,V01,,
-P03,ندوة التحول الرقمي,90,100,projector;microphone,fixed,2026-10-18,10:00,V02,,
-P04,حفل الختام,90,450,projector;microphone;sound system;stage,fixed,2026-10-19,16:00,V01,,
-P05,ورشة تحليل البيانات,120,35,projector;computers,flexible,,,,2026-10-17,09:00-12:00
-P06,ورشة تصميم تجربة المستخدم,90,25,projector;whiteboard,flexible,,,,2026-10-18,
-P07,جلسة ريادة الأعمال,60,80,projector;microphone,flexible,,,,,13:00-17:00
-P08,عرض الشركات الناشئة,120,110,projector;microphone;sound system,flexible,,,,2026-10-18;2026-10-19,
-P09,ورشة الذكاء الاصطناعي,180,38,projector;computers,flexible,,,,2026-10-17,
-P10,لقاء المستثمرين,60,50,projector;microphone;video conferencing,flexible,,,,,
-P11,المؤتمر الصحفي,45,200,projector;microphone;sound system,flexible,,,,2026-10-17,12:00-14:00
-P12,ورشة الطباعة ثلاثية الأبعاد,120,20,projector;3d printer,flexible,,,,,
-P13,معرض الابتكار,120,600,projector,flexible,,,,,
-P14,جلسة الأمن السيبراني,90,90,projector;microphone,flexible,,,,2026-10-17,14:00-16:00
-P15,ورشة كتابة المحتوى,60,28,projector;whiteboard,flexible,,,,2026-10-19,09:00-11:00
-P16,حوار الطاولة المستديرة,90,45,projector;microphone,flexible,,,,,
-P17,ورشة البرمجة للمبتدئين,240,40,projector;computers,flexible,,,,2026-10-18,09:00-14:00
-P18,جلسة التوظيف,60,70,projector;microphone,flexible,,,,2026-10-19,
+program_id,program_name,category,admission,duration_min,attendance_value,venue_requirements,time_type,fixed_date,fixed_start_time,fixed_venue_id,preferred_dates,preferred_time_slots
+F01,حفل الافتتاح,كلمة رئيسية,registration,60,350,projector;microphone;sound system;stage,fixed,2026-10-17,10:00,V01,,
+F02,الكلمة الرئيسية: مستقبل المدن الذكية,كلمة رئيسية,open,60,380,projector;microphone;sound system;stage,fixed,2026-10-17,11:30,V01,,
+F03,حفل الختام,كلمة رئيسية,registration,60,400,projector;microphone;sound system;stage,fixed,2026-10-20,18:30,V01,,
+P01,ورشة تطبيقات الذكاء الاصطناعي التوليدي,ورشة ذكاء اصطناعي,open,120,38,projector;computers,flexible,,,,2026-10-17,13:00-17:00
+P02,معسكر الذكاء الاصطناعي المكثّف,ورشة ذكاء اصطناعي,registration,180,40,projector;computers,flexible,,,,2026-10-18,
+P03,جلسة حوارية: التمويل الجريء,جلسة حوارية,open,60,90,projector;microphone,flexible,,,,2026-10-17,16:00-19:00
+P04,عرض الشركات الناشئة,عرض شركات ناشئة,open,120,100,projector;microphone;sound system,flexible,,,,2026-10-18,
+P05,ندوة الأمن السيبراني,ندوة,open,90,70,projector;microphone,flexible,,,,2026-10-18,10:00-13:00
+P06,ورشة تصميم تجربة المستخدم,ورشة تصميم,registration,90,30,projector;whiteboard,flexible,,,,2026-10-17,
+P07,جلسة حوارية: المرأة في التقنية,جلسة حوارية,open,60,100,projector;microphone;sound system,flexible,,,,2026-10-19,16:00-20:00
+P08,ورشة البرمجة بلغة بايثون,ورشة برمجة,registration,120,35,projector;computers,flexible,,,,2026-10-19,10:00-14:00
+P09,لقاء المستثمرين بالمؤسسين,جلسة حوارية,registration,90,60,projector;microphone,flexible,,,,2026-10-17,
+P10,ندوة المدن الذكية,ندوة,open,60,75,projector;microphone,flexible,,,,2026-10-18,
+P11,تجربة الواقع الافتراضي,عرض تفاعلي,open,60,25,vr headsets,flexible,,,,,
+P12,ورشة تعلّم الآلة للمبتدئين,ورشة ذكاء اصطناعي,open,90,25,projector;computers,flexible,,,,2026-10-19,
+P13,جلسة حوارية: الاستدامة في المعارض,جلسة حوارية,open,60,80,projector;microphone,flexible,,,,2026-10-19,
+P14,ندوة البيانات المفتوحة,ندوة,open,60,60,projector;microphone,flexible,,,,2026-10-19,
+P15,ورشة الحوسبة السحابية,ورشة برمجة,open,120,35,projector;computers,flexible,,,,2026-10-20,10:00-14:00
+P16,عرض المشاريع الطلابية,عرض شركات ناشئة,open,90,60,projector;microphone,flexible,,,,2026-10-20,
+P17,ندوة مستقبل العمل,ندوة,open,60,70,projector;microphone,flexible,,,,2026-10-20,

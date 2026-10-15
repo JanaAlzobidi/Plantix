@@ -1,7 +1,6 @@
 venue_id,venue_name,capacity,equipment,min_setup_time_min,status
-V01,القاعة الكبرى,500,projector;microphone;sound system;stage,30,available
-V02,قاعة المؤتمرات A,120,projector;microphone;sound system,20,available
-V03,قاعة المؤتمرات B,120,projector;microphone,20,available
-V04,قاعة الورش 1,40,projector;whiteboard;computers,15,available
-V05,قاعة الورش 2,30,projector;whiteboard,15,available
-V06,قاعة كبار الزوار,60,projector;microphone;video conferencing,30,maintenance
+V01,المسرح الرئيسي,400,projector;microphone;sound system;stage,30,available
+V02,قاعة الحوار,120,projector;microphone;sound system,20,available
+V03,قاعة الندوات,80,projector;microphone,15,available
+V04,مختبر الورش,40,projector;computers;whiteboard,15,available
+V05,مختبر الابتكار,70,projector;computers;whiteboard,20,available
