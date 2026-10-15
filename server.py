@@ -19,7 +19,7 @@ import shutil
 import threading
 import webbrowser
 from dataclasses import replace
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -77,6 +77,14 @@ class ProgramIn(BaseModel):
     fixed_date: str | None = None
     fixed_start: str | None = None
     fixed_venue: str | None = None
+    owner: str | None = None  # the requesting party; None keeps the current owner
+
+
+class ReportIn(BaseModel):
+    venue_id: str
+    kind: str  # equipment | closed
+    equipment: str | None = None
+    note: str = ""
 
 
 class CheckIn(BaseModel):
@@ -175,9 +183,14 @@ class Workspace:
             self.programs, self.venues, self.approved = load_inputs(self.paths)
             if "admission" not in self.programs.columns:
                 self.programs["admission"] = ADMISSION_OPEN
+            if "owner" not in self.programs.columns:
+                self.programs["owner"] = ""
             self.config = EngineConfig()
             self.lock_slots: dict[str, tuple[str, str, str]] = {}
             self.notified: set[str] = set()
+            self.owner_of: dict[str, str] = dict(zip(self.programs["program_id"], self.programs["owner"]))
+            self.reports: list[dict] = []
+            self.notifications: list[dict] = []
             self.refresh()
 
     # ---- engine
@@ -244,6 +257,7 @@ class Workspace:
                 "fixed": {"date": text(r["fixed_date"]), "start": text(r["fixed_start_time"]),
                           "venue_id": text(r["fixed_venue_id"])} if fixed else None,
                 "locked": pid in self.lock_slots,
+                "owner": text(r.get("owner", "")),
             })
         return out
 
@@ -281,18 +295,49 @@ class Workspace:
         return out
 
     def changes_json(self, result) -> list[dict]:
+        """Every pending change, with its owner and the notification text they will get."""
+        days = {d["date"]: d for d in self.days_json(self.config)}
+        vnames = dict(zip(self.venues["venue_id"], self.venues["venue_name"]))
+        ends = dict(zip(result.schedule["program_id"], result.schedule["end_time"])) if not result.schedule.empty else {}
+        reasons = dict(zip(result.unscheduled["program_id"], result.unscheduled["reason"])) if not result.unscheduled.empty else {}
+        open_reports = {r["venue_id"]: r for r in self.reports if r["status"] == "open"}
         out = []
         for r in result.changes.to_dict("records"):
             kind = r["change_type"]
-            if kind == "unchanged" or (kind == "not_scheduled" and r["program_id"] in self.notified):
+            pid, name = r["program_id"], r["program_name"]
+            if kind == "unchanged" or (kind == "not_scheduled" and pid in self.notified):
                 continue
+
             def point(prefix):
                 d = r[f"{prefix}_date"]
                 if d is None or (isinstance(d, float) and math.isnan(d)):
                     return None
                 return {"date": d, "start": r[f"{prefix}_start_time"], "venue_id": r[f"{prefix}_venue_id"]}
-            out.append({"program_id": r["program_id"], "name": r["program_name"], "type": kind,
-                        "old": point("old"), "new": point("new"), "in_freeze": bool(r["in_freeze_window"])})
+
+            old, new = point("old"), point("new")
+            long = lambda p: days[p["date"]]["long"] if p["date"] in days else p["date"]
+            because = ""
+            if old and old["venue_id"] in open_reports:
+                because = f" بسبب {open_reports[old['venue_id']]['title']}"
+            if kind == "new":
+                message = (f"جُدولت «{name}» يوم {long(new)} من {new['start']} إلى {ends.get(pid, '')} "
+                           f"في {vnames.get(new['venue_id'], new['venue_id'])}.")
+            elif kind == "moved":
+                if old["date"] == new["date"] and old["start"] == new["start"]:
+                    message = (f"تغيّرت قاعة «{name}» إلى {vnames.get(new['venue_id'], new['venue_id'])} "
+                               f"في الموعد نفسه{because}. لا يلزمك أي إجراء.")
+                else:
+                    message = (f"تغيّر موعد «{name}» إلى {long(new)} {new['start']} "
+                               f"في {vnames.get(new['venue_id'], new['venue_id'])}{because}.")
+            elif kind == "dropped":
+                message = f"تعذّر إبقاء «{name}» في موعدها المعتمد{because}، وسيتواصل معك فريق البرامج لموعد بديل."
+            elif kind == "not_scheduled":
+                message = f"تعذّرت جدولة «{name}»: {reasons.get(pid, '')}"
+            else:
+                message = f"أُزيلت «{name}» من الجدول لأنها لم تعد ضمن البرامج."
+            out.append({"program_id": pid, "name": name, "type": kind, "old": old, "new": new,
+                        "in_freeze": bool(r["in_freeze_window"]), "owner": self.owner_of.get(pid, ""),
+                        "message": message})
         return out
 
     def summary_json(self, result) -> dict:
@@ -326,8 +371,11 @@ class Workspace:
                         [e for p in world["programs"] for e in p["equipment"]]:
                 if item not in catalog:
                     catalog.append(item)
+            owners = sorted({o for o in self.programs["owner"] if text(o)})
             world.update({
                 "reference_date": self.reference_date, "freeze_days": self.freeze_days,
+                "owners": owners, "reports": self.reports, "notifications": self.notifications,
+                "notified": sorted(self.notified),
                 "approved": approved, "changes": self.changes_json(self.result),
                 "equipment": [{"id": e, "label": EQUIPMENT_AR.get(e, e)} for e in catalog],
                 "warnings": self.result.issues.loc[self.result.issues["severity"] == "warning", "message"].tolist()
@@ -356,6 +404,7 @@ class Workspace:
             "preferred_dates": "" if fixed else ";".join(p.preferred_dates),
             "preferred_time_slots": "" if fixed else (p.preferred_slot or ""),
             "admission": p.admission or ADMISSION_OPEN,
+            "owner": (p.owner.strip() if p.owner is not None else self.owner_of.get(pid, "")),
         }
         df = self.programs.copy()
         for column in row:
@@ -414,6 +463,7 @@ class Workspace:
             if result.status == "INVALID_DATA":
                 raise HTTPException(422, {"message": "لم تُحفظ: البيانات فيها مشكلة.", "errors": _errors(result)})
             self.programs = df
+            self.owner_of[target] = text(df.loc[df["program_id"] == target, "owner"].iloc[0])
             self.notified.discard(target)
             self.refresh()
             return target
@@ -540,6 +590,96 @@ class Workspace:
             self.programs, self.venues, self.config = programs, venues, config
             self.refresh()
 
+    # ---- venue reports (مشرف القاعات)
+
+    def report_inputs(self, body: ReportIn):
+        """The venues table after the reported problem, plus a title for the report."""
+        venues = self.venues.copy()
+        hits = venues.index[venues["venue_id"] == body.venue_id]
+        if not len(hits):
+            raise HTTPException(400, "اختر القاعة.")
+        i = hits[0]
+        name = venues.at[i, "venue_name"]
+        if body.kind == "equipment":
+            item = normalize_item(body.equipment or "")
+            have = [normalize_item(x) for x in split_list(venues.at[i, "equipment"])]
+            if item not in have:
+                raise HTTPException(400, "اختر الجهاز المتعطل من معدات هذه القاعة.")
+            venues.at[i, "equipment"] = ";".join(x for x in have if x != item)
+            title = f"عطل {EQUIPMENT_AR.get(item, item)} في {name}"
+        elif body.kind == "closed":
+            venues.at[i, "status"] = "unavailable"
+            title = f"إغلاق {name}"
+        else:
+            raise HTTPException(400, "نوع بلاغ غير معروف.")
+        return venues, title
+
+    def report_impact(self, venues, venue_id) -> dict:
+        """Affected = events that were in the reported venue, plus approved events that move.
+        New events the engine merely reshuffles elsewhere are counted apart (no one was told about them yet)."""
+        result = self.run(self.programs, venues, self.config)
+        if result.status == "INVALID_DATA":
+            return {"ok": False, "errors": _errors(result), "affected": [], "rearranged": 0, "result": result}
+        before, after = _slot_map(self.result), _slot_map(result)
+        names = dict(zip(self.programs["program_id"], self.programs["program_name"]))
+        approved = set(self.approved["program_id"]) if self.approved is not None else set()
+        changed = [k for k in before if before[k] != after.get(k)]
+        direct = [k for k in changed if before[k][2] == venue_id or k in approved]
+        affected = [{"program_id": k, "name": names.get(k, k), "moved_to": after.get(k)} for k in direct]
+        return {"ok": True, "errors": [], "affected": affected, "rearranged": len(changed) - len(direct), "result": result}
+
+    def preview_report(self, body: ReportIn) -> dict:
+        with self.lock:
+            venues, title = self.report_inputs(body)
+            impact = self.report_impact(venues, body.venue_id)
+            return {"title": title, "ok": impact["ok"], "errors": impact["errors"],
+                    "affected": impact["affected"], "rearranged": impact["rearranged"]}
+
+    def submit_report(self, body: ReportIn) -> dict:
+        with self.lock:
+            venues, title = self.report_inputs(body)
+            # A broken venue is a fact, not a choice: locks on it can no longer hold.
+            for pid, slot in list(self.lock_slots.items()):
+                if slot[2] == body.venue_id:
+                    self.lock_slots.pop(pid)
+            impact = self.report_impact(venues, body.venue_id)
+            previous = text(self.venues.loc[self.venues["venue_id"] == body.venue_id, "status"].iloc[0])
+            self.venues = venues
+            report = {
+                "id": f"R{len(self.reports) + 1}", "venue_id": body.venue_id,
+                "venue_name": text(venues.loc[venues["venue_id"] == body.venue_id, "venue_name"].iloc[0]),
+                "kind": body.kind, "equipment": normalize_item(body.equipment or "") or None,
+                "equipment_label": EQUIPMENT_AR.get(normalize_item(body.equipment or ""), body.equipment or ""),
+                "note": body.note.strip(), "title": title, "time": datetime.now().strftime("%H:%M"),
+                "status": "open", "previous_status": previous,
+                "affected": [a["name"] for a in impact["affected"]], "rearranged": impact["rearranged"],
+                "errors": impact["errors"],
+            }
+            self.reports.append(report)
+            self.refresh()
+            return report
+
+    def resolve_report(self, rid: str) -> dict:
+        with self.lock:
+            report = next((r for r in self.reports if r["id"] == rid), None)
+            if report is None:
+                raise HTTPException(404, "البلاغ غير موجود.")
+            if report["status"] == "resolved":
+                return report
+            i = self.venues.index[self.venues["venue_id"] == report["venue_id"]][0]
+            if report["kind"] == "equipment":
+                have = [normalize_item(x) for x in split_list(self.venues.at[i, "equipment"])]
+                if report["equipment"] not in have:
+                    self.venues.at[i, "equipment"] = ";".join(have + [report["equipment"]])
+            else:
+                self.venues.at[i, "status"] = report["previous_status"] or AVAILABLE_STATUS
+            report["status"] = "resolved"
+            report["resolved_time"] = datetime.now().strftime("%H:%M")
+            self.notifications.append({"to": "organizer", "owner": "", "time": report["resolved_time"],
+                                       "title": "أُغلق بلاغ", "text": f"أُغلق بلاغ «{report['title']}»: القاعة جاهزة من جديد."})
+            self.refresh()
+            return report
+
     # ---- approval
 
     def approve(self) -> int:
@@ -547,15 +687,31 @@ class Workspace:
             self.refresh()
             if not self.result.can_approve:
                 raise HTTPException(400, "لا يمكن اعتماد المقترح لأن فيه أخطاء.")
-            sent = len(self.changes_json(self.result))
+            changes = self.changes_json(self.result)
             try:
                 approve_proposal(self.paths)
             except ApprovalError as exc:
                 raise HTTPException(409, str(exc))
+            now = datetime.now().strftime("%H:%M")
+            labels = {"new": "جُدولت فعاليتك", "moved": "تغيير في فعاليتك", "dropped": "فعاليتك تحتاج موعدًا بديلًا",
+                      "not_scheduled": "تعذّرت جدولة فعاليتك", "removed": "أُزيلت فعاليتك"}
+            for c in changes:
+                self.notifications.append({"to": "owner", "owner": c["owner"], "time": now,
+                                           "title": labels.get(c["type"], "تحديث"), "text": c["message"],
+                                           "program_id": c["program_id"]})
+            for r in self.reports:
+                if r["status"] == "open":
+                    r["status"] = "approved"
+                    r["approved_time"] = now
+                    moved = len(r["affected"])
+                    self.notifications.append({"to": "venue", "owner": "", "time": now,
+                                               "title": "اعتُمدت الخطة البديلة",
+                                               "text": f"اعتمد فريق البرامج الخطة البديلة لبلاغ «{r['title']}»"
+                                                       + (f"، وأُبلغ أصحاب {moved} من الفعاليات." if moved else ".")})
             self.approved = read_csv(self.paths.approved)
             self.notified |= set(self.result.unscheduled["program_id"])
             self.refresh()
-            return sent
+            return len(changes)
 
     # ---- exports
 
@@ -669,6 +825,20 @@ def create_app(data_dir=ROOT / "data", runtime_dir=ROOT / "runtime",
         sent = ws.approve()
         return {"sent": sent, "state": ws.state()}
 
+    @app.post("/api/reports/preview")
+    def preview_report(body: ReportIn):
+        return ws.preview_report(body)
+
+    @app.post("/api/reports")
+    def submit_report(body: ReportIn):
+        report = ws.submit_report(body)
+        return {"report": report, "state": ws.state()}
+
+    @app.post("/api/reports/{rid}/resolve")
+    def resolve_report(rid: str):
+        report = ws.resolve_report(rid)
+        return {"report": report, "state": ws.state()}
+
     @app.post("/api/reset")
     def reset():
         ws.reset()
@@ -686,6 +856,14 @@ def create_app(data_dir=ROOT / "data", runtime_dir=ROOT / "runtime",
     @app.get("/")
     def index():
         return FileResponse(WEB / "index.html")
+
+    @app.get("/owner")
+    def owner_page():
+        return FileResponse(WEB / "owner.html")
+
+    @app.get("/venue")
+    def venue_page():
+        return FileResponse(WEB / "venue.html")
 
     app.mount("/static", StaticFiles(directory=WEB), name="static")
     return app
